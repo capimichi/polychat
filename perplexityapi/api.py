@@ -4,6 +4,7 @@ import uvicorn
 from starlette.responses import RedirectResponse
 
 from perplexityapi.container.default_container import DefaultContainer
+from perplexityapi.controller.chat_controller import ChatController
 
 
 # Creazione dell'istanza dell'applicazione FastAPI
@@ -16,9 +17,9 @@ app = FastAPI(
 default_container: DefaultContainer = DefaultContainer.getInstance()
 
 # Istanziamo il controller tramite il container di dipendenze
-# first_controller = default_container.get(FirstController)
+chat_controller: ChatController = default_container.get(ChatController)
 # Includiamo il router del controller nell'app
-# app.include_router(first_controller.router)
+app.include_router(chat_controller.router)
 
 # Configurazione CORS per consentire richieste da altre origini
 app.add_middleware(
@@ -45,5 +46,5 @@ if __name__ == "__main__":
         "perplexityapi.api:app",  # Percorso completo del modulo
         host=default_container.get_var("api_host"),
         port=default_container.get_var("api_port"),
-        reload=True
+        reload=False
     )
