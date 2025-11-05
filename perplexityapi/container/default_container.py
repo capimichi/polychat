@@ -47,7 +47,7 @@ class DefaultContainer:
     def _init_environment_variables(self):
         self.pandoc_executable = os.environ.get('PANDOC_EXECUTABLE', 'pandoc')
         self.api_host = os.environ.get('API_HOST', '0.0.0.0')
-        self.api_port = int(os.environ.get('API_PORT', '8000'))
+        self.api_port = int(os.environ.get('API_PORT', '8459'))
         self.session_dir_env = os.environ.get('SESSION_DIR', 'var/session')
         self.headless = os.environ.get('HEADLESS', 'false').lower() == 'true'
 

@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  perplexity-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: perplexity-api
+    ports:
+      - "8459:8459"
+    env_file:
+      - .env
+    volumes:
+      - ./var:/app/var
+    restart: unless-stopped
+    networks:
+      - perplexity-network
+
+networks:
+  perplexity-network:
+    driver: bridge
