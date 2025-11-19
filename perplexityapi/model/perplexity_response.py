@@ -61,3 +61,33 @@ class PerplexityResponse(BaseModel):
 
         return None
 
+    @computed_field
+    @property
+    def image_url(self) -> Optional[str]:
+        """
+        Estrae l'URL dell'immagine generata dal primo block con
+        intended_usage == "answer_generated_image".
+
+        Returns:
+            str: L'URL dell'immagine generata se presente.
+            None: Se non viene trovato alcun block idoneo o se i dati sono incompleti.
+        """
+        if not self.blocks:
+            return None
+
+        for block in self.blocks:
+            if block.get('intended_usage') == 'answer_generated_image':
+                inline_entity_block = block.get('inline_entity_block') or {}
+                media_block = inline_entity_block.get('media_block') if inline_entity_block else None
+                generated_media_items = media_block.get('generated_media_items') if media_block else None
+
+                if generated_media_items and len(generated_media_items) > 0:
+                    first_item = generated_media_items[0] or {}
+                    image = first_item.get('image') if first_item else None
+                    if image:
+                        return image.get('url')
+
+                return None
+
+        return None
+
