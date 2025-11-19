@@ -4,6 +4,7 @@ from camoufox.async_api import AsyncCamoufox
 from typing import Optional
 from injector import inject
 import json
+from browserforge.fingerprints import Screen
 
 from perplexityapi.model.perplexity_response import PerplexityResponse
 
@@ -48,7 +49,13 @@ class PerplexityClient:
         Returns:
             The complete response content from Perplexity
         """
-        async with AsyncCamoufox(headless=self.headless) as browser:
+        constrains = Screen(max_width=1920, max_height=1080)
+
+        async with AsyncCamoufox(
+            headless=self.headless,
+            humanize=True,
+            screen=constrains
+            ) as browser:
             # Load storage state if exists
             context_options = {}
             if os.path.exists(self.storage_state_path):
@@ -70,8 +77,14 @@ class PerplexityClient:
             await page.wait_for_selector("#ask-input")
             await page.click("#ask-input")
 
-            # Type the message
-            await page.type("#ask-input", message)
+            # Replace new lines with spaces
+            message = message.replace("\n", " ")
+
+            # split message into chunks of 500 characters to avoid input issues
+            chunk_size = 500
+            chunks = [message[i:i + chunk_size] for i in range(0, len(message), chunk_size)]
+            for chunk in chunks:
+                await page.type("#ask-input", chunk)
 
             # Press Enter
             await page.keyboard.press("Enter")
