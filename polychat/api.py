@@ -3,8 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from starlette.responses import RedirectResponse
 
-from perplexityapi.container.default_container import DefaultContainer
-from perplexityapi.controller.chat_controller import ChatController
+from polychat.container.default_container import DefaultContainer
+from polychat.controller.deepseek_controller import DeepseekController
+from polychat.controller.kimi_controller import KimiController
+from polychat.controller.perplexity_controller import PerplexityController
+from polychat.controller.chat_gpt_controller import ChatGptController
 
 
 # Creazione dell'istanza dell'applicazione FastAPI
@@ -16,10 +19,17 @@ app = FastAPI(
 
 default_container: DefaultContainer = DefaultContainer.getInstance()
 
-# Istanziamo il controller tramite il container di dipendenze
-chat_controller: ChatController = default_container.get(ChatController)
-# Includiamo il router del controller nell'app
-app.include_router(chat_controller.router)
+# Istanziamo i controller tramite il container di dipendenze
+perplexity_chat_controller: PerplexityController = default_container.get(PerplexityController)
+kimi_chat_controller: KimiController = default_container.get(KimiController)
+deepseek_chat_controller: DeepseekController = default_container.get(DeepseekController)
+chatgpt_chat_controller: ChatGptController = default_container.get(ChatGptController)
+
+# Includiamo i router dei controller nell'app
+app.include_router(perplexity_chat_controller.router)
+app.include_router(kimi_chat_controller.router)
+app.include_router(deepseek_chat_controller.router)
+app.include_router(chatgpt_chat_controller.router)
 
 # Configurazione CORS per consentire richieste da altre origini
 app.add_middleware(
@@ -43,7 +53,7 @@ async def health_check():
 # Per eseguire il server direttamente quando si esegue questo file
 if __name__ == "__main__":
     uvicorn.run(
-        "perplexityapi.api:app",  # Percorso completo del modulo
+        "polychat.api:app",  # Percorso completo del modulo
         host=default_container.get_var("api_host"),
         port=default_container.get_var("api_port"),
         reload=False

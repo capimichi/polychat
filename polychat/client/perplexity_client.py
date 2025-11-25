@@ -6,7 +6,8 @@ from injector import inject
 import json
 from browserforge.fingerprints import Screen
 
-from perplexityapi.model.perplexity_response import PerplexityResponse
+from polychat.model import ChatResponse
+from polychat.model.perplexity_response import PerplexityResponse
 
 
 class PerplexityClient:
@@ -38,7 +39,7 @@ class PerplexityClient:
             await page.close()
             await context.close()
 
-    async def ask(self, message: str, chat_slug: Optional[str] = None) -> PerplexityResponse:
+    async def ask(self, message: str, chat_slug: Optional[str] = None) -> ChatResponse:
         """
         Ask a question to Perplexity AI and wait for the complete response.
 
@@ -90,12 +91,13 @@ class PerplexityClient:
             await page.keyboard.press("Enter")
 
             # Wait for and capture the SSE response
-            response_content = await self._wait_for_response(page)
+            response_content: PerplexityResponse = await self._wait_for_response(page)
 
             await page.close()
             await context.close()
 
-            return response_content
+            slug = chat_slug or response_content.thread_url_slug or ""
+            return ChatResponse(slug=slug, message=response_content.answer)
 
     async def _wait_for_response(self, page) -> PerplexityResponse:
         """
@@ -146,4 +148,3 @@ class PerplexityClient:
 
         # Validate and return the PerplexityResponse using Pydantic
         return PerplexityResponse.model_validate_json(response_content)
-
