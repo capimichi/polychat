@@ -6,11 +6,12 @@ from injector import inject
 import json
 from browserforge.fingerprints import Screen
 
+from polychat.client.abstract_client import AbstractClient
 from polychat.model import ChatResponse
 from polychat.model.perplexity_response import PerplexityResponse
 
 
-class PerplexityClient:
+class PerplexityClient(AbstractClient):
 
     @inject
     def __init__(self, session_dir: str, headless: bool = False):
@@ -76,16 +77,7 @@ class PerplexityClient:
 
             # Wait for the input field and click it
             await page.wait_for_selector("#ask-input")
-            await page.click("#ask-input")
-
-            # Replace new lines with spaces
-            message = message.replace("\n", " ")
-
-            # split message into chunks of 500 characters to avoid input issues
-            chunk_size = 500
-            chunks = [message[i:i + chunk_size] for i in range(0, len(message), chunk_size)]
-            for chunk in chunks:
-                await page.type("#ask-input", chunk)
+            await self._paste_message(page, "#ask-input", message)
 
             # Press Enter
             await page.keyboard.press("Enter")

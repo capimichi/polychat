@@ -15,6 +15,7 @@
 ## Coding Style & Naming Conventions
 - Language: Python 3.11. Prefer type hints and Pydantic models for request/response schemas.
 - Style: 4-space indent, snake_case for functions/vars, PascalCase for classes.
+- Keep coherence between module names and classes (e.g., `abstract_client.py` -> `AbstractClient`), and place shared helpers in the client package rather than scattering new files.
 - Controllers are provider-scoped (e.g., `PerplexityChatController`) with routers mounted under `/<provider>/chats`.
 - Keep modules small: avoid mixing unrelated classes/functions in the same file; split fakes/builders/fixtures across separate modules.
 - Keep comments minimal and purposeful; avoid non-ASCII unless required.

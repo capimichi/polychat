@@ -9,11 +9,12 @@ from browserforge.fingerprints import Screen
 from camoufox.async_api import AsyncCamoufox
 from injector import inject
 
+from polychat.client.abstract_client import AbstractClient
 from polychat.model import ChatResponse
 from polychat.model.chatgpt import ConversationList
 
 
-class ChatGptClient:
+class ChatGptClient(AbstractClient):
     CHAT_LIST_URL = (
         "https://chatgpt.com/backend-api/conversations?"
         "offset={offset}&limit={limit}&order=updated&is_archived=false&"
@@ -108,13 +109,7 @@ class ChatGptClient:
                     await page.wait_for_timeout(1000)
 
             await page.wait_for_selector("#prompt-textarea")
-            await page.click("#prompt-textarea")
-
-            safe_message = message.replace("\n", " ")
-            chunk_size = 500
-            chunks = [safe_message[i:i + chunk_size] for i in range(0, len(safe_message), chunk_size)]
-            for chunk in chunks:
-                await page.type("#prompt-textarea", chunk)
+            await self._paste_message(page, "#prompt-textarea", message)
 
             await page.keyboard.press("Enter")
 

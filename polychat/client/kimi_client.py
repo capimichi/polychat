@@ -6,10 +6,11 @@ from browserforge.fingerprints import Screen
 from camoufox.async_api import AsyncCamoufox
 from injector import inject
 
+from polychat.client.abstract_client import AbstractClient
 from polychat.model import ChatResponse
 
 
-class KimiClient:
+class KimiClient(AbstractClient):
     """Client per interagire con Kimi tramite automazione browser."""
 
     BASE_URL = "https://www.kimi.com/"
@@ -54,13 +55,7 @@ class KimiClient:
 
             await page.goto(self.BASE_URL)
             await page.wait_for_selector(".chat-input")
-            await page.click(".chat-input")
-
-            safe_message = message.replace("\n", " ")
-            chunk_size = 500
-            chunks = [safe_message[i:i + chunk_size] for i in range(0, len(safe_message), chunk_size)]
-            for chunk in chunks:
-                await page.type(".chat-input", chunk)
+            await self._paste_message(page, ".chat-input", message)
 
             await page.keyboard.press("Enter")
 
