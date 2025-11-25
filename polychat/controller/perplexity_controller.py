@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 from injector import inject
 
 from polychat.model.chat_request import ChatRequest
-from polychat.model.perplexity_response import PerplexityResponse
+from polychat.model import ChatResponse
 from polychat.service.perplexity_service import PerplexityService
 
 
@@ -24,7 +24,7 @@ class PerplexityController:
             summary="Send a message to Perplexity",
         )
 
-    async def create_chat(self, request: ChatRequest) -> PerplexityResponse:
+    async def create_chat(self, request: ChatRequest) -> ChatResponse:
         """Send a chat message to Perplexity."""
         try:
             return await self.perplexity_service.ask(request.message, request.chat_slug)
