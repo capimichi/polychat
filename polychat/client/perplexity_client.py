@@ -16,7 +16,7 @@ class PerplexityClient(AbstractClient):
     @inject
     def __init__(self, session_dir: str, headless: bool = False):
         self.session_dir = session_dir
-        self.storage_state_path = os.path.join(session_dir, "state.json")
+        self.storage_state_path = os.path.join(session_dir, "perplexity_state.json")
         self.headless = headless
 
     async def login(self):
