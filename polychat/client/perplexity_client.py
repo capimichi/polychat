@@ -6,7 +6,7 @@ from injector import inject
 import json
 from browserforge.fingerprints import Screen
 
-from perplexityapi.model.perplexity_response import PerplexityResponse
+from polychat.model.perplexity_response import PerplexityResponse
 
 
 class PerplexityClient:

@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional, Any
-from perplexityapi.model.web_result_metadata import WebResultMetadata
+from polychat.model.web_result_metadata import WebResultMetadata
 
 
 class WebResult(BaseModel):

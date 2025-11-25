@@ -41,7 +41,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN python -m camoufox fetch
 
 # Copy application code
-COPY perplexityapi /app/perplexityapi
+COPY polychat /app/polychat
 
 # Create var directory for session storage
 RUN mkdir -p /app/var/session
@@ -50,4 +50,4 @@ RUN mkdir -p /app/var/session
 EXPOSE 8459
 
 # Run the application
-CMD ["python", "-m", "perplexityapi.api"]
+CMD ["python", "-m", "polychat.api"]

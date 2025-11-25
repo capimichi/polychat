@@ -3,11 +3,11 @@
 The project is organized into the following main files and directories:
 
 - **pir.json**: Project configuration file.
-- **perplexityapi/**: Main source code directory.
+- **polychat/**: Main source code directory.
   - **api.py**: Exposes the project's main APIs.
   - **client/**: Contains the client for interacting with external services (e.g. `perplexity_client.py`).
   - **container/**: Manages configuration and initialization of components (e.g. `default_container.py`).
-  - **controller/**: Implements control logic, such as chat management (`chat_controller.py`).
+  - **controller/**: Implements control logic, such as chat management (`perplexity_chat_controller.py`, `gpt_chat_controller.py`, etc.).
   - **model/**: Defines the data models used by the application (`chat.py`).
   - **service/**: Contains business logic and main services (`chat_service.py`).
   - **helper/**: Utility functions and helpers, these are usually classes containing static methods.

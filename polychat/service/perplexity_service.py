@@ -1,10 +1,10 @@
 from typing import Optional
 from injector import inject
-from perplexityapi.client.perplexity_client import PerplexityClient
-from perplexityapi.model.perplexity_response import PerplexityResponse
+from polychat.client.perplexity_client import PerplexityClient
+from polychat.model.perplexity_response import PerplexityResponse
 
 
-class ChatService:
+class PerplexityService:
 
     @inject
     def __init__(self, perplexity_client: PerplexityClient):
@@ -36,4 +36,3 @@ class ChatService:
             return response
         except Exception as e:
             raise Exception(f"Error asking Perplexity: {str(e)}")
-
