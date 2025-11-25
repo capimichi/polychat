@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import os
 from http.cookiejar import CookieJar
@@ -113,10 +114,15 @@ class ChatGptClient(AbstractClient):
 
             await page.keyboard.press("Enter")
 
+            keepalive_task = asyncio.create_task(self._keep_page_alive(page, stream_received))
             try:
                 await asyncio.wait_for(stream_received.wait(), timeout=120)
             except asyncio.TimeoutError:
                 raise Exception("Timeout in attesa della risposta ChatGPT")
+            finally:
+                keepalive_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await keepalive_task
 
             await page.wait_for_timeout(3000)
 
@@ -135,6 +141,14 @@ class ChatGptClient(AbstractClient):
         slug = self._extract_slug_from_url(current_url if 'current_url' in locals() else url)
         return ChatResponse(slug=slug, message=clipboard_text)
 
+    async def _keep_page_alive(self, page, stop_event: asyncio.Event) -> None:
+        """Mantiene la pagina attiva durante l'attesa della risposta."""
+        try:
+            while not stop_event.is_set():
+                await page.evaluate("() => window.dispatchEvent(new Event('mousemove'))")
+                await page.wait_for_timeout(3000)
+        except Exception as exc:
+            print(f"Keep-alive ChatGPT: {exc}")
 
     def _load_cookies(self) -> CookieJar:
         """Carica i cookie Playwright salvati in una CookieJar per requests."""
