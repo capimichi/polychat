@@ -5,3 +5,4 @@ from typing import Optional
 class ChatRequest(BaseModel):
     message: str
     chat_slug: Optional[str] = None
+    type: bool = True

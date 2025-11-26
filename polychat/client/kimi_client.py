@@ -36,7 +36,7 @@ class KimiClient(AbstractClient):
             await page.close()
             await context.close()
 
-    async def ask(self, message: str) -> ChatResponse:
+    async def ask(self, message: str, type_input: bool = True) -> ChatResponse:
         """Invia un prompt a Kimi e restituisce la risposta come ChatResponse."""
         constraints = Screen(max_width=1920, max_height=1080)
         content_html = ""
@@ -54,8 +54,10 @@ class KimiClient(AbstractClient):
             page = await context.new_page()
 
             await page.goto(self.BASE_URL)
-            await page.wait_for_selector(".chat-input")
-            await self._paste_message(page, ".chat-input", message)
+            if type_input:
+                await self._type_message(page, ".chat-input", message)
+            else:
+                await self._paste_message(page, ".chat-input", message)
 
             await page.keyboard.press("Enter")
 

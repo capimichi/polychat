@@ -20,10 +20,10 @@ class PerplexityService:
         except Exception as e:
             raise Exception(f"Error during Perplexity login: {str(e)}")
 
-    async def ask(self, message: str, chat_slug: Optional[str] = None) -> ChatResponse:
+    async def ask(self, message: str, chat_slug: Optional[str] = None, type_input: bool = True) -> ChatResponse:
         """Ask a question to Perplexity AI and return a ChatResponse."""
         try:
-            response = await self.perplexity_client.ask(message, chat_slug)
+            response = await self.perplexity_client.ask(message, chat_slug, type_input=type_input)
             return response
         except Exception as e:
             raise Exception(f"Error asking Perplexity: {str(e)}")

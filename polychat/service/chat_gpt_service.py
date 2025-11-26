@@ -16,9 +16,9 @@ class ChatGptService:
         """Esegue il login a ChatGPT tramite il client."""
         await self.chatgpt_client.login()
 
-    async def ask(self, message: str, chat_id: Optional[str] = None) -> ChatResponse:
+    async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> ChatResponse:
         """Invia una domanda a ChatGPT e restituisce l'output come ChatResponse."""
         try:
-            return await self.chatgpt_client.ask(message, chat_id)
+            return await self.chatgpt_client.ask(message, chat_id, type_input=type_input)
         except Exception as exc:
             raise Exception(f"Error asking ChatGPT: {exc}")

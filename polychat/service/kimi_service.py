@@ -14,9 +14,9 @@ class KimiService:
         """Esegue il login a Kimi tramite il client."""
         await self.kimi_client.login()
 
-    async def ask(self, message: str) -> ChatResponse:
+    async def ask(self, message: str, type_input: bool = True) -> ChatResponse:
         """Invia una domanda a Kimi e restituisce la risposta come ChatResponse."""
         try:
-            return await self.kimi_client.ask(message)
+            return await self.kimi_client.ask(message, type_input=type_input)
         except Exception as exc:
             raise Exception(f"Error asking Kimi: {exc}")

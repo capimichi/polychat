@@ -27,7 +27,11 @@ class PerplexityController:
     async def create_chat(self, request: ChatRequest) -> ChatResponse:
         """Send a chat message to Perplexity."""
         try:
-            return await self.perplexity_service.ask(request.message, request.chat_slug)
+            return await self.perplexity_service.ask(
+                request.message,
+                request.chat_slug,
+                type_input=request.type,
+            )
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

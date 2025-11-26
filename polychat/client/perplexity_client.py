@@ -40,7 +40,7 @@ class PerplexityClient(AbstractClient):
             await page.close()
             await context.close()
 
-    async def ask(self, message: str, chat_slug: Optional[str] = None) -> ChatResponse:
+    async def ask(self, message: str, chat_slug: Optional[str] = None, type_input: bool = True) -> ChatResponse:
         """
         Ask a question to Perplexity AI and wait for the complete response.
 
@@ -75,9 +75,11 @@ class PerplexityClient(AbstractClient):
             # Navigate to the URL
             await page.goto(url)
 
-            # Wait for the input field and click it
-            await page.wait_for_selector("#ask-input")
-            await self._paste_message(page, "#ask-input", message)
+            # Wait for the input field and enter message
+            if type_input:
+                await self._type_message(page, "#ask-input", message)
+            else:
+                await self._paste_message(page, "#ask-input", message)
 
             # Press Enter
             await page.keyboard.press("Enter")

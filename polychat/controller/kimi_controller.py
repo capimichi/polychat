@@ -27,7 +27,7 @@ class KimiController:
     async def create_chat(self, request: ChatRequest) -> ChatResponse:
         """Invia un messaggio a Kimi e restituisce la risposta."""
         try:
-            return await self.kimi_service.ask(request.message)
+            return await self.kimi_service.ask(request.message, type_input=request.type)
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

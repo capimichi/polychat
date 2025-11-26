@@ -26,7 +26,11 @@ class ChatGptController:
     async def create_chat(self, request: ChatRequest) -> ChatResponse:
         """Invia un messaggio a ChatGPT e restituisce il testo generato."""
         try:
-            return await self.chatgpt_service.ask(request.message, request.chat_slug)
+            return await self.chatgpt_service.ask(
+                request.message,
+                request.chat_slug,
+                type_input=request.type,
+            )
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
