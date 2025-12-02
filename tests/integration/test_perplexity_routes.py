@@ -28,7 +28,7 @@ def test_post_perplexity_chat_returns_payload():
     payload = response.json()
     assert payload["backend_uuid"] == "backend-uuid"
     assert payload["answer"] == "from fake"
-    assert fake_client.calls == [("Hello!", None)]
+    assert fake_client.calls == [("Hello!", None, True)]
 
 
 def test_get_perplexity_chats_returns_not_implemented():
