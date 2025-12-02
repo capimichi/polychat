@@ -12,7 +12,7 @@ async def test_chat_service_delegates_to_client():
 
     response = await service.ask("hello", chat_slug="chat-123")
 
-    assert fake_client.calls == [("hello", "chat-123")]
+    assert fake_client.calls == [("hello", "chat-123", True)]
     assert response.answer == "ok"
 
 
