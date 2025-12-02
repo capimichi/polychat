@@ -14,7 +14,7 @@ async def test_create_chat_returns_perplexity_response(chat_service, fake_perple
 
     assert response.backend_uuid == "backend-uuid"
     assert response.answer == "hello world"
-    assert fake_perplexity_client.calls == [("Hi there", "slug-1")]
+    assert fake_perplexity_client.calls == [("Hi there", "slug-1", True)]
 
 
 @pytest.mark.asyncio
