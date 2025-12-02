@@ -53,45 +53,42 @@ class PerplexityClient(AbstractClient):
         """
         constrains = Screen(max_width=1920, max_height=1080)
 
-        async with AsyncCamoufox(
-            headless=self.headless,
-            humanize=True,
-            screen=constrains
-            ) as browser:
-            # Load storage state if exists
-            context_options = {}
-            if os.path.exists(self.storage_state_path):
-                context_options['storage_state'] = self.storage_state_path
+        async def _attempt() -> ChatResponse:
+            async with AsyncCamoufox(
+                headless=self.headless,
+                humanize=True,
+                screen=constrains
+                ) as browser:
+                context_options = {}
+                if os.path.exists(self.storage_state_path):
+                    context_options['storage_state'] = self.storage_state_path
 
-            context = await browser.new_context(**context_options)
-            page = await context.new_page()
+                context = await browser.new_context(**context_options)
+                page = await context.new_page()
 
-            # Build URL
-            if chat_slug:
-                url = f"https://www.perplexity.ai/search/{chat_slug}"
-            else:
-                url = "https://www.perplexity.ai/"
+                if chat_slug:
+                    url = f"https://www.perplexity.ai/search/{chat_slug}"
+                else:
+                    url = "https://www.perplexity.ai/"
 
-            # Navigate to the URL
-            await page.goto(url)
+                await page.goto(url)
 
-            # Wait for the input field and enter message
-            if type_input:
-                await self._type_message(page, "#ask-input", message)
-            else:
-                await self._paste_message(page, "#ask-input", message)
+                if type_input:
+                    await self._type_message(page, "#ask-input", message)
+                else:
+                    await self._paste_message(page, "#ask-input", message)
 
-            # Press Enter
-            await page.keyboard.press("Enter")
+                await page.keyboard.press("Enter")
 
-            # Wait for and capture the SSE response
-            response_content: PerplexityResponse = await self._wait_for_response(page)
+                response_content: PerplexityResponse = await self._wait_for_response(page)
 
-            await page.close()
-            await context.close()
+                await page.close()
+                await context.close()
 
-            slug = chat_slug or response_content.thread_url_slug or ""
-            return ChatResponse(slug=slug, message=response_content.answer)
+                slug = chat_slug or response_content.thread_url_slug or ""
+                return ChatResponse(slug=slug, message=response_content.answer)
+
+        return await self._retry_async(_attempt, attempts=3)
 
     async def _wait_for_response(self, page) -> PerplexityResponse:
         """
