@@ -1,5 +1,10 @@
+import asyncio
 import shutil
 import subprocess
+from typing import Awaitable, Callable, Optional, TypeVar
+
+
+T = TypeVar("T")
 
 
 class AbstractClient:
@@ -34,3 +39,24 @@ class AbstractClient:
     def _sanitize_message(content: str) -> str:
         """Rimuove i newline sostituendoli con spazi per evitare invii indesiderati."""
         return content.replace("\n", " ")
+
+    async def _retry_async(
+        self,
+        operation: Callable[[], Awaitable[T]],
+        attempts: int = 3,
+        delay_seconds: float = 1.5,
+    ) -> T:
+        """
+        Esegue un'operazione asincrona con politiche di retry.
+        Riprova fino a `attempts` volte con backoff lineare se solleva eccezioni.
+        """
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return await operation()
+            except Exception as exc:
+                last_exc = exc
+                if attempt == attempts:
+                    raise
+                await asyncio.sleep(delay_seconds * attempt)
+        raise last_exc if last_exc else Exception("Operazione fallita senza eccezione.")
