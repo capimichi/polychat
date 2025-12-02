@@ -13,6 +13,6 @@ class FakePerplexityClient:
     async def login(self):
         self.logged_in = True
 
-    async def ask(self, message: str, chat_slug: str | None = None) -> PerplexityResponse:
-        self.calls.append((message, chat_slug))
+    async def ask(self, message: str, chat_slug: str | None = None, type_input: bool = True) -> PerplexityResponse:
+        self.calls.append((message, chat_slug, type_input))
         return self.response
