@@ -38,59 +38,61 @@ class KimiClient(AbstractClient):
 
     async def ask(self, message: str, type_input: bool = True) -> ChatResponse:
         """Invia un prompt a Kimi e restituisce la risposta come ChatResponse."""
-        constraints = Screen(max_width=1920, max_height=1080)
-        content_html = ""
 
-        async with AsyncCamoufox(
-            headless=self.headless,
-            humanize=True,
-            screen=constraints
-        ) as browser:
-            context_options = {}
-            if os.path.exists(self.storage_state_path):
-                context_options["storage_state"] = self.storage_state_path
+        async def _attempt() -> ChatResponse:
+            constraints = Screen(max_width=1920, max_height=1080)
+            content_html = ""
 
-            context = await browser.new_context(**context_options)
-            page = await context.new_page()
+            async with AsyncCamoufox(
+                headless=self.headless,
+                humanize=True,
+                screen=constraints
+            ) as browser:
+                context_options = {}
+                if os.path.exists(self.storage_state_path):
+                    context_options["storage_state"] = self.storage_state_path
 
-            await page.goto(self.BASE_URL)
-            if type_input:
-                await self._type_message(page, ".chat-input", message)
-            else:
-                await self._paste_message(page, ".chat-input", message)
+                context = await browser.new_context(**context_options)
+                page = await context.new_page()
 
-            await page.keyboard.press("Enter")
+                await page.goto(self.BASE_URL)
+                if type_input:
+                    await self._type_message(page, ".chat-input", message)
+                else:
+                    await self._paste_message(page, ".chat-input", message)
 
-            # Attesa iniziale prima di monitorare la risposta
-            await asyncio.sleep(5)
+                await page.keyboard.press("Enter")
 
-            last_len = 0
-            max_wait_seconds = 120
-            elapsed = 0
+                await asyncio.sleep(5)
 
-            while elapsed < max_wait_seconds:
-                await asyncio.sleep(2)
-                elapsed += 2
+                last_len = 0
+                max_wait_seconds = 120
+                elapsed = 0
 
-                messages = await page.query_selector_all(".chat-content-item-assistant .markdown")
-                if not messages:
-                    continue
+                while elapsed < max_wait_seconds:
+                    await asyncio.sleep(2)
+                    elapsed += 2
 
-                last_message = messages[-1]
-                html = await last_message.inner_html()
-                if html is None:
-                    continue
+                    messages = await page.query_selector_all(".chat-content-item-assistant .markdown")
+                    if not messages:
+                        continue
 
-                current_len = len(html)
-                if current_len > last_len:
-                    last_len = current_len
-                    content_html = html
-                    continue
+                    last_message = messages[-1]
+                    html = await last_message.inner_html()
+                    if html is None:
+                        continue
 
-                # Non è cresciuto: consideriamo la risposta completa
-                break
+                    current_len = len(html)
+                    if current_len > last_len:
+                        last_len = current_len
+                        content_html = html
+                        continue
 
-            await page.close()
-            await context.close()
+                    break
 
-        return ChatResponse(slug="", message=content_html)
+                await page.close()
+                await context.close()
+
+            return ChatResponse(slug="", message=content_html)
+
+        return await self._retry_async(_attempt, attempts=3)
