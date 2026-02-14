@@ -7,7 +7,7 @@ class ChatResponse(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     slug: str
-    message: str
+    message: str = ""
 
     def get_slug(self) -> str:
         return self.slug

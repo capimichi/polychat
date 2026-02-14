@@ -11,17 +11,16 @@ from polychat.service.chat_gpt_service import ChatGptService
 )
 def login_chatgpt_command():
     """
-    Login to ChatGPT by opening a browser and waiting 45 seconds for manual login.
-    The session will be saved for future requests.
+    Login to ChatGPT by saving a provided session cookie.
     """
     default_container: DefaultContainer = DefaultContainer.getInstance()
     chatgpt_service: ChatGptService = default_container.get(ChatGptService)
 
-    click.echo('Opening browser for ChatGPT login...')
-    click.echo('Please login manually. You have 45 seconds.')
+    click.echo('Inserisci il cookie __Secure-next-auth.session-token:')
+    session_cookie = click.prompt('Cookie', hide_input=False)
 
     try:
-        asyncio.run(chatgpt_service.login())
-        click.echo('Login successful! Session saved.')
+        asyncio.run(chatgpt_service.login(session_cookie))
+        click.echo('Cookie salvato correttamente.')
     except Exception as e:
         click.echo(f'Login failed: {str(e)}', err=True)

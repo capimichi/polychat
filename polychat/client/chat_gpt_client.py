@@ -1,7 +1,5 @@
 import asyncio
-import json
 import os
-from http.cookiejar import CookieJar
 from typing import Optional
 
 import requests
@@ -11,7 +9,7 @@ from injector import inject
 
 from polychat.client.abstract_client import AbstractClient
 from polychat.model import ChatResponse
-from polychat.model.chatgpt import ConversationList
+from polychat.model.chatgpt import ConversationDetail, ConversationList
 
 
 class ChatGptClient(AbstractClient):
@@ -25,36 +23,44 @@ class ChatGptClient(AbstractClient):
     def __init__(self, session_dir: str, headless: bool = False):
         self.session_dir = session_dir
         self.storage_state_path = os.path.join(session_dir, "chatgpt_state.json")
+        self.cookie_path = os.path.join(session_dir, "chatgpt_cookie.txt")
         self.headless = headless
 
-    async def login(self) -> None:
-        """Apre il browser per consentire il login manuale e salva lo stato della sessione."""
-        constraints = Screen(max_width=768, max_height=992)
-        async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
-            context = await browser.new_context()
-            page = await context.new_page()
+    async def login(self, session_cookie: str) -> None:
+        """Salva il cookie di sessione fornito manualmente."""
+        cookie_value = (session_cookie or "").strip()
+        if not cookie_value:
+            raise ValueError("Cookie di sessione mancante")
 
-            await page.goto("https://chatgpt.com/")
-            await asyncio.sleep(60)
+        os.makedirs(self.session_dir, exist_ok=True)
+        with open(self.cookie_path, "w", encoding="utf-8") as f:
+            f.write(cookie_value)
 
-            await context.storage_state(path=self.storage_state_path)
-
-            await page.close()
-            await context.close()
+    def logout(self) -> None:
+        """Rimuove cookie e storage state salvati."""
+        for path in (self.cookie_path, self.storage_state_path):
+            if os.path.exists(path):
+                os.remove(path)
 
     def get_conversations(self, offset: int = 0, limit: int = 28) -> ConversationList:
         """Recupera la lista delle conversazioni esistenti."""
-        if not os.path.exists(self.storage_state_path):
-            raise FileNotFoundError("Storage state non trovato: esegui prima login()")
+        session_cookie = self._load_session_cookie()
 
-        cookies = self._load_cookies()
         url = self.CHAT_LIST_URL.format(offset=offset, limit=limit)
 
         with requests.Session() as session:
-            session.cookies = cookies
-            response = session.get(url, timeout=30)
+            response = session.get(url, headers=self._auth_headers(session_cookie, ""), timeout=30)
             response.raise_for_status()
             return ConversationList.model_validate_json(response.text)
+
+    async def get_conversation(self, conversation_id: str) -> ConversationDetail:
+        """Recupera i dettagli di una conversazione tramite il browser."""
+        if not conversation_id:
+            raise ValueError("conversation_id mancante")
+
+        session_cookie = self._load_session_cookie()
+        payload = await self._fetch_conversation_via_browser(conversation_id, session_cookie)
+        return ConversationDetail.model_validate(payload)
 
     async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> ChatResponse:
         """
@@ -62,30 +68,10 @@ class ChatGptClient(AbstractClient):
         su /backend-api/f/conversation, poi copia l'ultima risposta cliccando il bottone
         con aria-label="Copia" e restituisce il contenuto della clipboard come ChatResponse.
         """
-        if not os.path.exists(self.storage_state_path):
-            raise FileNotFoundError("Storage state non trovato: esegui prima login()")
+        session_cookie = self._load_session_cookie()
 
         async def _attempt() -> ChatResponse:
             constraints = Screen(max_width=1920, max_height=1080)
-            stream_payload = ""
-            stream_received = asyncio.Event()
-
-            async def handle_response(response):
-                nonlocal stream_payload
-                if stream_received.is_set():
-                    return
-                if "/backend-api/f/conversation" in response.url:
-                    try:
-                        body = await response.body()
-                        raw_content = body.decode("utf-8")
-                        stream_payload = raw_content
-                        if "data: [DONE]" in raw_content:
-                            stream_received.set()
-                    except Exception as exc:
-                        print(f"Errore lettura stream ChatGPT: {exc}")
-
-
-            clipboard_text = ""
             current_url = ""
             async with AsyncCamoufox(
                 headless=self.headless,
@@ -95,10 +81,19 @@ class ChatGptClient(AbstractClient):
                 context_options = {}
                 if os.path.exists(self.storage_state_path):
                     context_options["storage_state"] = self.storage_state_path
-
                 context = await browser.new_context(**context_options)
+                await context.add_cookies([
+                    {
+                        "name": "__Secure-next-auth.session-token",
+                        "value": session_cookie,
+                        "domain": "chatgpt.com",
+                        "path": "/",
+                        "httpOnly": True,
+                        "secure": True,
+                        "sameSite": "None",
+                    }
+                ])
                 page = await context.new_page()
-                page.on("response", handle_response)
 
                 url = f"https://chatgpt.com/c/{chat_id}" if chat_id else "https://chatgpt.com/"
                 await page.goto(url)
@@ -106,13 +101,18 @@ class ChatGptClient(AbstractClient):
                 await page.wait_for_load_state("networkidle")
                 await page.wait_for_timeout(2000)
 
-                # if there is a .popover with data-state="open", then check if there is a div with text "ChatGpt pro" and click on the workspace
-                popover = await page.query_selector('div.popover[data-state="open"]')
+                popover = await page.query_selector(".popover")
                 if popover:
-                    workspace_button = await popover.query_selector('button:has-text("ChatGpt pro")')
-                    if workspace_button:
-                        await workspace_button.click()
-                        await page.wait_for_timeout(1000)
+                    popover_text = (await popover.inner_text()).lower()
+                    if "area di lavoro" in popover_text or "workspace" in popover_text:
+                        workspace_button = await popover.query_selector("button")
+                        if workspace_button:
+                            await workspace_button.click()
+                            await page.wait_for_timeout(1000)
+                            try:
+                                await context.storage_state(path=self.storage_state_path)
+                            except Exception as exc:
+                                print(f"Errore salvataggio storage state: {exc}")
 
                 if type_input:
                     await self._type_message(page, "#prompt-textarea", message)
@@ -121,53 +121,104 @@ class ChatGptClient(AbstractClient):
 
                 await page.keyboard.press("Enter")
 
-                max_wait_ms = 600_000
-                elapsed = 0
-                poll_ms = 1000
-                while elapsed < max_wait_ms:
-                    await page.wait_for_timeout(poll_ms)
-                    elapsed += poll_ms
+                try:
+                    await page.wait_for_url("**/c/**", timeout=30_000)
+                except Exception:
+                    pass
 
-                    current_url = page.url
-                    if stream_received.is_set():
-                        break
-                else:
-                    raise Exception("Timeout in attesa della risposta ChatGPT")
+                current_url = page.url
 
                 try:
-                    # page.off("response", handle_response)
-                    await page.wait_for_timeout(3000)
-
-                    messages = await page.query_selector_all(".text-message.relative .markdown")
-                    if messages:
-                        last_message = messages[-1]
-                        clipboard_text = await last_message.inner_text()
-                    
                     await page.close()
                     await context.close()
                 except Exception as exc:
                     print(f"Errore durante la chiusura della pagina o del contesto: {exc}")
 
             slug = self._extract_slug_from_url(current_url if 'current_url' in locals() else url)
-            return ChatResponse(slug=slug, message=clipboard_text)
+            return ChatResponse(slug=slug, message="")
 
-        return await self._retry_async(_attempt, attempts=3)
+        return await _attempt()
 
-    def _load_cookies(self) -> CookieJar:
-        """Carica i cookie Playwright salvati in una CookieJar per requests."""
-        with open(self.storage_state_path, "r") as f:
-            storage = json.load(f)
+    def _load_session_cookie(self) -> str:
+        """Carica il cookie di sessione salvato."""
+        if not os.path.exists(self.cookie_path):
+            raise FileNotFoundError("Cookie di sessione non trovato: esegui prima login()")
 
-        jar = requests.cookies.RequestsCookieJar()
-        for cookie in storage.get("cookies", []):
-            jar.set(
-                name=cookie.get("name"),
-                value=cookie.get("value"),
-                domain=cookie.get("domain"),
-                path=cookie.get("path", "/"),
-                secure=cookie.get("secure", False),
-            )
-        return jar
+        with open(self.cookie_path, "r", encoding="utf-8") as f:
+            cookie_value = f.read().strip()
+
+        if not cookie_value:
+            raise ValueError("Cookie di sessione vuoto")
+
+        return cookie_value
+
+    async def _fetch_conversation_via_browser(self, conversation_id: str, session_cookie: str) -> dict:
+        conversation_url = f"https://chatgpt.com/backend-api/conversation/{conversation_id}"
+        constraints = Screen(max_width=1920, max_height=1080)
+        conversation_payload = {}
+        response_received = asyncio.Event()
+
+        async def handle_response(response):
+            nonlocal conversation_payload
+            if response.url != conversation_url:
+                return
+            try:
+                conversation_payload = await response.json()
+                response_received.set()
+            except Exception as exc:
+                print(f"Errore lettura conversazione: {exc}")
+
+        async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
+            context_options = {}
+            if os.path.exists(self.storage_state_path):
+                context_options["storage_state"] = self.storage_state_path
+            context = await browser.new_context(**context_options)
+            await context.add_cookies([
+                {
+                    "name": "__Secure-next-auth.session-token",
+                    "value": session_cookie,
+                    "domain": "chatgpt.com",
+                    "path": "/",
+                    "httpOnly": True,
+                    "secure": True,
+                    "sameSite": "None",
+                }
+            ])
+            page = await context.new_page()
+            page.on("response", handle_response)
+
+            url = f"https://chatgpt.com/c/{conversation_id}"
+            await page.goto(url)
+            await page.wait_for_load_state("networkidle")
+
+            try:
+                await asyncio.wait_for(response_received.wait(), timeout=30)
+            except Exception:
+                pass
+
+            try:
+                await context.storage_state(path=self.storage_state_path)
+            except Exception as exc:
+                print(f"Errore salvataggio storage state: {exc}")
+            await page.close()
+            await context.close()
+
+        if not conversation_payload:
+            raise Exception("Risposta conversazione non intercettata")
+        return conversation_payload
+
+    @staticmethod
+    def _auth_headers(session_cookie: str, account_id: str = "") -> dict:
+        headers = {
+            "accept": "*/*",
+            "authorization": f"Bearer {session_cookie}",
+            "user-agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/144.0.0.0 Safari/537.36"
+            ),
+        }
+        return headers
 
     @staticmethod
     def _extract_slug_from_url(current_url: str) -> str:
