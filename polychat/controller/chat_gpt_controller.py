@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 from injector import inject
 
 from polychat.mapper.service.chat_to_api_mapper import ChatToApiMapper
-from polychat.model import ChatRequest
+from polychat.model.chat_request import ChatRequest
 from polychat.model.api.chat_response import ChatResponse
 from polychat.service.chat_gpt_service import ChatGptService
 

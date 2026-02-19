@@ -19,6 +19,7 @@
 - Client helpers should centralize cross-cutting concerns (es. retry policy, input mode) in the base client and reuse from specific providers; avoid duplicare logica o introdurre modelli non documentati.
 - Controllers are provider-scoped (e.g., `PerplexityChatController`) with routers mounted under `/<provider>/chats`.
 - Keep modules small: avoid mixing unrelated classes/functions in the same file; split fakes/builders/fixtures across separate modules.
+- Keep all `__init__.py` files empty; do not use them for re-exports.
 - Keep comments minimal and purposeful; avoid non-ASCII unless required.
 
 ## Testing Guidelines

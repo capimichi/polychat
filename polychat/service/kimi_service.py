@@ -2,7 +2,7 @@ from injector import inject
 
 from polychat.client.kimi_client import KimiClient
 from polychat.mapper.client.kimi_chat_mapper import KimiChatMapper
-from polychat.model import Chat
+from polychat.model.service.chat import Chat
 
 
 class KimiService:

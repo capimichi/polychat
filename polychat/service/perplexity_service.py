@@ -2,7 +2,7 @@ from typing import Optional
 from injector import inject
 from polychat.client.perplexity_client import PerplexityClient
 from polychat.mapper.client.perplexity_chat_mapper import PerplexityChatMapper
-from polychat.model import Chat
+from polychat.model.service.chat import Chat
 
 
 class PerplexityService:
