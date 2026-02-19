@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 import os
 from typing import Optional
 
@@ -21,27 +22,23 @@ class ChatGptClient(AbstractClient):
     )
 
     @inject
-    def __init__(self, session_dir: str, headless: bool = False):
+    def __init__(
+        self,
+        session_dir: str,
+        headless: bool = False,
+        session_cookie: str = "",
+        workspace_name: str = "",
+    ):
         self.session_dir = session_dir
         self.storage_state_path = os.path.join(session_dir, "chatgpt_state.json")
-        self.cookie_path = os.path.join(session_dir, "chatgpt_cookie.txt")
         self.headless = headless
-
-    async def login(self, session_cookie: str) -> None:
-        """Salva il cookie di sessione fornito manualmente."""
-        cookie_value = (session_cookie or "").strip()
-        if not cookie_value:
-            raise ValueError("Cookie di sessione mancante")
-
-        os.makedirs(self.session_dir, exist_ok=True)
-        with open(self.cookie_path, "w", encoding="utf-8") as f:
-            f.write(cookie_value)
+        self.session_cookie = session_cookie
+        self.workspace_name = (workspace_name or "").strip()
 
     def logout(self) -> None:
-        """Rimuove cookie e storage state salvati."""
-        for path in (self.cookie_path, self.storage_state_path):
-            if os.path.exists(path):
-                os.remove(path)
+        """Rimuove solo lo storage state salvato."""
+        if os.path.exists(self.storage_state_path):
+            os.remove(self.storage_state_path)
 
     def get_conversations(self, offset: int = 0, limit: int = 28) -> ConversationList:
         """Recupera la lista delle conversazioni esistenti."""
@@ -102,18 +99,18 @@ class ChatGptClient(AbstractClient):
                 await page.wait_for_load_state("networkidle")
                 await page.wait_for_timeout(2000)
 
-                popover = await page.query_selector(".popover")
-                if popover:
-                    popover_text = (await popover.inner_text()).lower()
-                    if "area di lavoro" in popover_text or "workspace" in popover_text:
-                        workspace_button = await popover.query_selector("button")
-                        if workspace_button:
-                            await workspace_button.click()
-                            await page.wait_for_timeout(1000)
-                            try:
-                                await context.storage_state(path=self.storage_state_path)
-                            except Exception as exc:
-                                print(f"Errore salvataggio storage state: {exc}")
+                if self.workspace_name:
+                    await self._select_workspace_by_name(page, self.workspace_name)
+                    await page.wait_for_timeout(1000)
+                    try:
+                        await context.storage_state(path=self.storage_state_path)
+                    except Exception as exc:
+                        print(f"Errore salvataggio storage state: {exc}")
+
+                try:
+                    await page.wait_for_selector("#prompt-textarea", timeout=5_000)
+                except Exception as exc:
+                    await self._raise_input_timeout(page, exc)
 
                 if type_input:
                     await self._type_message(page, "#prompt-textarea", message)
@@ -141,17 +138,64 @@ class ChatGptClient(AbstractClient):
         return await _attempt()
 
     def _load_session_cookie(self) -> str:
-        """Carica il cookie di sessione salvato."""
-        if not os.path.exists(self.cookie_path):
-            raise FileNotFoundError("Cookie di sessione non trovato: esegui prima login()")
-
-        with open(self.cookie_path, "r", encoding="utf-8") as f:
-            cookie_value = f.read().strip()
-
+        """Carica il cookie di sessione da variabile ambiente."""
+        cookie_value = (self.session_cookie or "").strip()
         if not cookie_value:
-            raise ValueError("Cookie di sessione vuoto")
+            raise ValueError("CHATGPT_SESSION_COOKIE mancante o vuoto")
 
         return cookie_value
+
+    async def _select_workspace_by_name(self, page, workspace_name: str) -> None:
+        target_name = " ".join(workspace_name.strip().lower().split())
+        if not target_name:
+            return
+
+        popover = await page.query_selector(".popover")
+        if not popover:
+            raise Exception(
+                f"Workspace picker non trovato: impossibile selezionare workspace '{workspace_name}'."
+            )
+
+        popover_text = " ".join(((await popover.inner_text()) or "").lower().split())
+        if "area di lavoro" not in popover_text and "workspace" not in popover_text:
+            raise Exception(
+                f"Workspace picker non disponibile: impossibile selezionare workspace '{workspace_name}'."
+            )
+
+        workspace_button = await popover.query_selector("button")
+        if not workspace_button:
+            raise Exception(
+                f"Pulsante workspace non trovato: impossibile selezionare workspace '{workspace_name}'."
+            )
+
+        await workspace_button.click()
+        await page.wait_for_timeout(500)
+
+        candidates = await page.query_selector_all("button, [role='option'], [role='menuitem']")
+        for candidate in candidates:
+            text = " ".join(((await candidate.inner_text()) or "").lower().split())
+            if text == target_name:
+                await candidate.click()
+                return
+
+        raise Exception(f"Workspace '{workspace_name}' non trovato.")
+
+    async def _raise_input_timeout(self, page, original_exception: Exception) -> None:
+        screenshots_dir = os.path.join(os.path.dirname(self.session_dir), "screenshots")
+        os.makedirs(screenshots_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        screenshot_path = os.path.join(screenshots_dir, f"chatgpt-input-timeout-{timestamp}.png")
+
+        try:
+            await page.screenshot(path=screenshot_path, full_page=True)
+        except Exception:
+            screenshot_path = f"{screenshot_path} (screenshot non riuscito)"
+
+        raise TimeoutError(
+            "Input '#prompt-textarea' non trovato entro 5 secondi. "
+            f"Screenshot creato: {screenshot_path}. "
+            "Verifica se è necessario fornire CHATGPT_WORKSPACE_NAME per selezionare il workspace corretto."
+        ) from original_exception
 
     async def _fetch_conversation_via_browser(self, conversation_id: str, session_cookie: str) -> dict:
         conversation_url = f"https://chatgpt.com/backend-api/conversation/{conversation_id}"

@@ -4,7 +4,7 @@ from injector import inject
 
 from polychat.client.chat_gpt_client import ChatGptClient
 from polychat.mapper.client.chatgpt_chat_mapper import ChatGptChatMapper
-from polychat.model import Chat
+from polychat.model.service.chat import Chat
 
 
 class ChatGptService:
@@ -13,10 +13,6 @@ class ChatGptService:
     def __init__(self, chatgpt_client: ChatGptClient, chatgpt_chat_mapper: ChatGptChatMapper):
         self.chatgpt_client = chatgpt_client
         self.chatgpt_chat_mapper = chatgpt_chat_mapper
-
-    async def login(self, session_cookie: str) -> None:
-        """Salva il cookie di sessione per ChatGPT tramite il client."""
-        await self.chatgpt_client.login(session_cookie)
 
     def logout(self) -> None:
         """Rimuove la sessione ChatGPT salvata."""

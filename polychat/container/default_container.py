@@ -63,6 +63,8 @@ class DefaultContainer:
         self.api_port = int(os.environ.get('API_PORT', '8459'))
         self.session_dir_env = os.environ.get('SESSION_DIR', 'var/session')
         self.headless = os.environ.get('HEADLESS', 'true').lower() == 'true'
+        self.chatgpt_session_cookie = os.environ.get('CHATGPT_SESSION_COOKIE', '')
+        self.chatgpt_workspace_name = os.environ.get('CHATGPT_WORKSPACE_NAME', '').strip()
 
     def _init_logging(self):
         logging.basicConfig(filename=self.app_log_path, level=logging.INFO, filemode='a', format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s', datefmt='%H:%M:%S')
@@ -86,7 +88,12 @@ class DefaultContainer:
         self.injector.binder.bind(PerplexityController, to=perplexity_controller)
 
         # Bind ChatGptClient with same session_dir and headless
-        chatgpt_client = ChatGptClient(self.session_dir, self.headless)
+        chatgpt_client = ChatGptClient(
+            self.session_dir,
+            self.headless,
+            self.chatgpt_session_cookie,
+            self.chatgpt_workspace_name,
+        )
         self.injector.binder.bind(ChatGptClient, to=chatgpt_client)
 
         # Bind ChatGptService
