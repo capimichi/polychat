@@ -36,15 +36,9 @@ if "browserforge" not in sys.modules:
     sys.modules["browserforge"] = browserforge_module
     sys.modules["browserforge.fingerprints"] = fingerprints_module
 
-from polychat.service.chat_service import ChatService
 from tests.fakes.fake_perplexity_client import FakePerplexityClient
 
 
 @pytest.fixture
 def fake_perplexity_client():
     return FakePerplexityClient()
-
-
-@pytest.fixture
-def chat_service(fake_perplexity_client):
-    return ChatService(fake_perplexity_client)
