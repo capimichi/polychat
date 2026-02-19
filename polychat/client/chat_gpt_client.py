@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+import logging
 import os
 from typing import Optional
 
@@ -13,6 +14,8 @@ from polychat.model.client.chatgpt_ask_result import ChatGptAskResult
 from polychat.model.client.chatgpt_conversation_detail import ConversationDetail
 from polychat.model.client.chatgpt_conversation_list import ConversationList
 
+logger = logging.getLogger(__name__)
+
 
 class ChatGptClient(AbstractClient):
     CHAT_LIST_URL = (
@@ -20,6 +23,12 @@ class ChatGptClient(AbstractClient):
         "offset={offset}&limit={limit}&order=updated&is_archived=false&"
         "is_starred=false&request_p_scope=false"
     )
+    PROMPT_SELECTOR = "#prompt-textarea"
+    PROMPT_WAIT_TIMEOUT_MS = 3_500
+    PROMPT_MAX_ATTEMPTS = 3
+    POST_NAVIGATION_WAIT_MS = 400
+    POST_RECOVERY_WAIT_MS = 250
+    WAIT_FOR_URL_TIMEOUT_MS = 8_000
 
     @inject
     def __init__(
@@ -71,6 +80,7 @@ class ChatGptClient(AbstractClient):
         async def _attempt() -> ChatGptAskResult:
             constraints = Screen(max_width=1920, max_height=1080)
             current_url = ""
+            logger.info("ChatGPT ask started (chat_id=%s, workspace=%s)", chat_id, self.workspace_name or "<none>")
             async with AsyncCamoufox(
                 headless=self.headless,
                 humanize=True,
@@ -94,45 +104,69 @@ class ChatGptClient(AbstractClient):
                 page = await context.new_page()
 
                 url = f"https://chatgpt.com/c/{chat_id}" if chat_id else "https://chatgpt.com/"
-                await page.goto(url)
-
-                await page.wait_for_load_state("networkidle")
-                await page.wait_for_timeout(2000)
+                logger.info("Opening ChatGPT page: %s", url)
+                await page.goto(url, wait_until="domcontentloaded", timeout=12_000)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=4_000)
+                except Exception:
+                    logger.info("Network idle not reached quickly; continuing anyway")
+                await page.wait_for_timeout(self.POST_NAVIGATION_WAIT_MS)
 
                 if self.workspace_name:
+                    logger.info("Workspace configured; selecting workspace by name: %s", self.workspace_name)
                     await self._select_workspace_by_name(page, self.workspace_name)
-                    await page.wait_for_timeout(1000)
+                    await page.wait_for_timeout(self.POST_RECOVERY_WAIT_MS)
                     try:
                         await context.storage_state(path=self.storage_state_path)
                     except Exception as exc:
-                        print(f"Errore salvataggio storage state: {exc}")
+                        logger.warning("Unable to persist ChatGPT storage state: %s", exc)
 
-                try:
-                    await page.wait_for_selector("#prompt-textarea", timeout=5_000)
-                except Exception as exc:
-                    await self._raise_input_timeout(page, exc)
+                for attempt in range(1, self.PROMPT_MAX_ATTEMPTS + 1):
+                    try:
+                        logger.info(
+                            "Waiting for prompt textarea (attempt=%s/%s, timeout_ms=%s)",
+                            attempt,
+                            self.PROMPT_MAX_ATTEMPTS,
+                            self.PROMPT_WAIT_TIMEOUT_MS,
+                        )
+                        await page.wait_for_selector(self.PROMPT_SELECTOR, timeout=self.PROMPT_WAIT_TIMEOUT_MS)
+                        logger.info("Prompt textarea found")
+                        break
+                    except Exception as exc:
+                        logger.info("Prompt textarea not found on attempt %s; trying recovery actions", attempt)
+                        recovered = await self._try_select_other_work_category(page)
+                        if not recovered:
+                            recovered = await self._try_skip_apps_at_work_selection(page)
+                        if not recovered:
+                            logger.error("No recovery action matched; raising timeout")
+                            await self._raise_input_timeout(page, exc)
 
                 if type_input:
-                    await self._type_message(page, "#prompt-textarea", message)
+                    logger.info("Typing prompt content in textarea")
+                    await self._type_message(page, self.PROMPT_SELECTOR, message)
                 else:
-                    await self._paste_message(page, "#prompt-textarea", message)
+                    logger.info("Pasting prompt content in textarea")
+                    await self._paste_message(page, self.PROMPT_SELECTOR, message)
 
                 await page.keyboard.press("Enter")
+                logger.info("Prompt submitted; waiting for conversation URL")
 
                 try:
-                    await page.wait_for_url("**/c/**", timeout=30_000)
+                    await page.wait_for_url("**/c/**", timeout=self.WAIT_FOR_URL_TIMEOUT_MS)
                 except Exception:
-                    pass
+                    logger.info("Conversation URL not detected within timeout; continuing")
 
                 current_url = page.url
+                logger.info("Current page URL after submit: %s", current_url)
 
                 try:
                     await page.close()
                     await context.close()
                 except Exception as exc:
-                    print(f"Errore durante la chiusura della pagina o del contesto: {exc}")
+                    logger.warning("Error while closing ChatGPT page/context: %s", exc)
 
             slug = self._extract_slug_from_url(current_url if 'current_url' in locals() else url)
+            logger.info("ChatGPT ask completed (conversation_id=%s)", slug)
             return ChatGptAskResult(conversation_id=slug, message="")
 
         return await _attempt()
@@ -150,34 +184,32 @@ class ChatGptClient(AbstractClient):
         if not target_name:
             return
 
+        logger.info("Searching workspace '%s'", workspace_name)
         popover = await page.query_selector(".popover")
         if not popover:
+            logger.error("Workspace picker popover not found")
             raise Exception(
                 f"Workspace picker non trovato: impossibile selezionare workspace '{workspace_name}'."
             )
 
         popover_text = " ".join(((await popover.inner_text()) or "").lower().split())
         if "area di lavoro" not in popover_text and "workspace" not in popover_text:
+            logger.error("Workspace picker popover found but does not contain workspace text")
             raise Exception(
                 f"Workspace picker non disponibile: impossibile selezionare workspace '{workspace_name}'."
             )
 
-        workspace_button = await popover.query_selector("button")
-        if not workspace_button:
-            raise Exception(
-                f"Pulsante workspace non trovato: impossibile selezionare workspace '{workspace_name}'."
-            )
-
-        await workspace_button.click()
-        await page.wait_for_timeout(500)
-
-        candidates = await page.query_selector_all("button, [role='option'], [role='menuitem']")
+        candidates = await popover.query_selector_all("button, [role='option'], [role='menuitem']")
+        if not candidates:
+            candidates = await page.query_selector_all("button, [role='option'], [role='menuitem']")
         for candidate in candidates:
             text = " ".join(((await candidate.inner_text()) or "").lower().split())
             if text == target_name:
                 await candidate.click()
+                logger.info("Workspace selected successfully: %s", workspace_name)
                 return
 
+        logger.error("Workspace not found in picker: %s", workspace_name)
         raise Exception(f"Workspace '{workspace_name}' non trovato.")
 
     async def _raise_input_timeout(self, page, original_exception: Exception) -> None:
@@ -190,12 +222,60 @@ class ChatGptClient(AbstractClient):
             await page.screenshot(path=screenshot_path, full_page=True)
         except Exception:
             screenshot_path = f"{screenshot_path} (screenshot non riuscito)"
+        logger.error("Prompt textarea timeout. Screenshot path: %s", screenshot_path)
 
         raise TimeoutError(
-            "Input '#prompt-textarea' non trovato entro 5 secondi. "
+            f"Input '{self.PROMPT_SELECTOR}' non trovato entro "
+            f"{self.PROMPT_MAX_ATTEMPTS * self.PROMPT_WAIT_TIMEOUT_MS / 1000:.1f} secondi. "
             f"Screenshot creato: {screenshot_path}. "
             "Verifica se è necessario fornire CHATGPT_WORKSPACE_NAME per selezionare il workspace corretto."
         ) from original_exception
+
+    async def _try_select_other_work_category(self, page) -> bool:
+        prompt = await page.query_selector("text=What kind of work do you do?")
+        if not prompt:
+            return False
+
+        logger.info("Detected work category onboarding; clicking 'Other'")
+        other_button = await page.query_selector("button:has-text('Other')")
+        if not other_button:
+            buttons = await page.query_selector_all("button")
+            for button in buttons:
+                text = " ".join(((await button.inner_text()) or "").lower().split())
+                if text == "other":
+                    other_button = button
+                    break
+
+        if not other_button:
+            return False
+
+        await other_button.click()
+        await page.wait_for_timeout(self.POST_RECOVERY_WAIT_MS)
+        logger.info("Clicked 'Other' in work category onboarding")
+        return True
+
+    async def _try_skip_apps_at_work_selection(self, page) -> bool:
+        prompt = await page.query_selector("text=Select apps you use at work")
+        if not prompt:
+            return False
+
+        logger.info("Detected apps-at-work onboarding; clicking 'Skip'")
+        skip_button = await page.query_selector("button:has-text('Skip')")
+        if not skip_button:
+            buttons = await page.query_selector_all("button")
+            for button in buttons:
+                text = " ".join(((await button.inner_text()) or "").lower().split())
+                if text == "skip":
+                    skip_button = button
+                    break
+
+        if not skip_button:
+            return False
+
+        await skip_button.click()
+        await page.wait_for_timeout(self.POST_RECOVERY_WAIT_MS)
+        logger.info("Clicked 'Skip' in apps-at-work onboarding")
+        return True
 
     async def _fetch_conversation_via_browser(self, conversation_id: str, session_cookie: str) -> dict:
         conversation_url = f"https://chatgpt.com/backend-api/conversation/{conversation_id}"
@@ -211,7 +291,7 @@ class ChatGptClient(AbstractClient):
                 conversation_payload = await response.json()
                 response_received.set()
             except Exception as exc:
-                print(f"Errore lettura conversazione: {exc}")
+                logger.warning("Error parsing conversation payload: %s", exc)
 
         async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
             context_options = {}
@@ -244,7 +324,7 @@ class ChatGptClient(AbstractClient):
             try:
                 await context.storage_state(path=self.storage_state_path)
             except Exception as exc:
-                print(f"Errore salvataggio storage state: {exc}")
+                logger.warning("Unable to persist ChatGPT storage state: %s", exc)
             await page.close()
             await context.close()
 
