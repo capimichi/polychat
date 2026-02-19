@@ -7,7 +7,7 @@ from camoufox.async_api import AsyncCamoufox
 from injector import inject
 
 from polychat.client.abstract_client import AbstractClient
-from polychat.model import ChatResponse
+from polychat.model.client.kimi_response import KimiResponse
 
 
 class KimiClient(AbstractClient):
@@ -36,10 +36,10 @@ class KimiClient(AbstractClient):
             await page.close()
             await context.close()
 
-    async def ask(self, message: str, type_input: bool = True) -> ChatResponse:
-        """Invia un prompt a Kimi e restituisce la risposta come ChatResponse."""
+    async def ask(self, message: str, type_input: bool = True) -> KimiResponse:
+        """Invia un prompt a Kimi e restituisce la risposta come KimiResponse."""
 
-        async def _attempt() -> ChatResponse:
+        async def _attempt() -> KimiResponse:
             constraints = Screen(max_width=1920, max_height=1080)
             content_html = ""
 
@@ -93,6 +93,6 @@ class KimiClient(AbstractClient):
                 await page.close()
                 await context.close()
 
-            return ChatResponse(slug="", message=content_html)
+            return KimiResponse(message=content_html)
 
         return await self._retry_async(_attempt, attempts=3)

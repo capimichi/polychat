@@ -1,6 +1,6 @@
-from polychat.model.chatgpt.conversation_item import ConversationItem
-from polychat.model.chatgpt.conversation_detail import ConversationDetail
-from polychat.model.chatgpt.conversation_list import ConversationList
+from polychat.model.client.chatgpt_conversation_item import ConversationItem
+from polychat.model.client.chatgpt_conversation_detail import ConversationDetail
+from polychat.model.client.chatgpt_conversation_list import ConversationList
 
 __all__ = [
     "ConversationDetail",

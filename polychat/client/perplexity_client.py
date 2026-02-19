@@ -7,8 +7,7 @@ import json
 from browserforge.fingerprints import Screen
 
 from polychat.client.abstract_client import AbstractClient
-from polychat.model import ChatResponse
-from polychat.model.perplexity_response import PerplexityResponse
+from polychat.model.client.perplexity_response import PerplexityResponse
 
 
 class PerplexityClient(AbstractClient):
@@ -40,7 +39,7 @@ class PerplexityClient(AbstractClient):
             await page.close()
             await context.close()
 
-    async def ask(self, message: str, chat_slug: Optional[str] = None, type_input: bool = True) -> ChatResponse:
+    async def ask(self, message: str, chat_slug: Optional[str] = None, type_input: bool = True) -> PerplexityResponse:
         """
         Ask a question to Perplexity AI and wait for the complete response.
 
@@ -53,7 +52,7 @@ class PerplexityClient(AbstractClient):
         """
         constrains = Screen(max_width=1920, max_height=1080)
 
-        async def _attempt() -> ChatResponse:
+        async def _attempt() -> PerplexityResponse:
             async with AsyncCamoufox(
                 headless=self.headless,
                 humanize=True,
@@ -85,8 +84,7 @@ class PerplexityClient(AbstractClient):
                 await page.close()
                 await context.close()
 
-                slug = chat_slug or response_content.thread_url_slug or ""
-                return ChatResponse(slug=slug, message=response_content.answer)
+                return response_content
 
         return await self._retry_async(_attempt, attempts=3)
 

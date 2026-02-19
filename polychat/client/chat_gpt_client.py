@@ -8,8 +8,9 @@ from camoufox.async_api import AsyncCamoufox
 from injector import inject
 
 from polychat.client.abstract_client import AbstractClient
-from polychat.model import ChatResponse
-from polychat.model.chatgpt import ConversationDetail, ConversationList
+from polychat.model.client.chatgpt_ask_result import ChatGptAskResult
+from polychat.model.client.chatgpt_conversation_detail import ConversationDetail
+from polychat.model.client.chatgpt_conversation_list import ConversationList
 
 
 class ChatGptClient(AbstractClient):
@@ -62,15 +63,15 @@ class ChatGptClient(AbstractClient):
         payload = await self._fetch_conversation_via_browser(conversation_id, session_cookie)
         return ConversationDetail.model_validate(payload)
 
-    async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> ChatResponse:
+    async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> ChatGptAskResult:
         """
         Invia un messaggio compilando #prompt-textarea, attende il completamento dello stream
         su /backend-api/f/conversation, poi copia l'ultima risposta cliccando il bottone
-        con aria-label="Copia" e restituisce il contenuto della clipboard come ChatResponse.
+        con aria-label="Copia" e restituisce il contenuto della clipboard come ChatGptAskResult.
         """
         session_cookie = self._load_session_cookie()
 
-        async def _attempt() -> ChatResponse:
+        async def _attempt() -> ChatGptAskResult:
             constraints = Screen(max_width=1920, max_height=1080)
             current_url = ""
             async with AsyncCamoufox(
@@ -135,7 +136,7 @@ class ChatGptClient(AbstractClient):
                     print(f"Errore durante la chiusura della pagina o del contesto: {exc}")
 
             slug = self._extract_slug_from_url(current_url if 'current_url' in locals() else url)
-            return ChatResponse(slug=slug, message="")
+            return ChatGptAskResult(conversation_id=slug, message="")
 
         return await _attempt()
 
