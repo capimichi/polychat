@@ -144,7 +144,7 @@ class PerplexityClient(AbstractClient):
                 }
             ])
             page = await context.new_page()
-            response_content = await self._wait_for_thread_response(page, conversation_id)
+            response_content = await self._wait_for_thread_response(page, conversation_id, post_navigation_wait_ms=10_000)
 
             try:
                 await context.storage_state(path=self.storage_state_path)
@@ -156,7 +156,7 @@ class PerplexityClient(AbstractClient):
 
         return response_content
 
-    async def _wait_for_thread_response(self, page, slug: str) -> PerplexityResponse:
+    async def _wait_for_thread_response(self, page, slug: str, post_navigation_wait_ms: int = 0) -> PerplexityResponse:
         """
         Attende la response AJAX /rest/thread/{slug} e valida l'ultima entry.
         """
@@ -182,6 +182,8 @@ class PerplexityClient(AbstractClient):
 
         page.on("response", handle_response)
         await page.goto(f"https://www.perplexity.ai/search/{slug}")
+        if post_navigation_wait_ms > 0:
+            await page.wait_for_timeout(post_navigation_wait_ms)
 
         try:
             await asyncio.wait_for(response_received.wait(), timeout=120)

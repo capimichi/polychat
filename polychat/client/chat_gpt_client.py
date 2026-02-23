@@ -322,6 +322,7 @@ class ChatGptClient(AbstractClient):
             url = f"https://chatgpt.com/c/{conversation_id}"
             await page.goto(url)
             await page.wait_for_load_state("networkidle")
+            await page.wait_for_timeout(10_000)
 
             try:
                 await asyncio.wait_for(response_received.wait(), timeout=30)
