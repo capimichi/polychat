@@ -1,4 +1,7 @@
-from fastapi import APIRouter, HTTPException, status
+from io import BytesIO
+
+from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from injector import inject
 
 from polychat.mapper.service.chat_to_api_mapper import ChatToApiMapper
@@ -24,6 +27,12 @@ class ChatGptController:
             methods=["POST"],
             summary="Invia un messaggio a ChatGPT",
             response_model=ChatResponse,
+        )
+        self.router.add_api_route(
+            "/download-proxy",
+            self.proxy_download,
+            methods=["GET"],
+            summary="Proxy download file ChatGPT",
         )
         self.router.add_api_route(
             "/{conversation_id}",
@@ -74,4 +83,23 @@ class ChatGptController:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error processing ChatGPT logout: {exc}",
+            )
+
+    def proxy_download(self, download_url: str = Query(...)) -> StreamingResponse:
+        """Proxy di download_url ChatGPT aggiungendo cookie di sessione in header Cookie."""
+        try:
+            content, status_code, content_type, content_disposition = self.chatgpt_service.proxy_download(download_url)
+            headers = {}
+            if content_disposition:
+                headers["Content-Disposition"] = content_disposition
+            return StreamingResponse(
+                BytesIO(content),
+                media_type=content_type,
+                status_code=status_code,
+                headers=headers,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error proxying ChatGPT download: {exc}",
             )

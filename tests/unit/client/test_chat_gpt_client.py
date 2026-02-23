@@ -215,6 +215,14 @@ async def test_select_workspace_by_name_clicks_matching_workspace(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_select_workspace_by_name_returns_when_popover_is_missing(tmp_path):
+    client = ChatGptClient(str(tmp_path), session_cookie="cookie", workspace_name="Team Alpha")
+    page = _WorkspacePage(None, [])
+
+    await client._select_workspace_by_name(page, "Team Alpha")
+
+
+@pytest.mark.asyncio
 async def test_select_workspace_by_name_raises_when_workspace_missing(tmp_path):
     client = ChatGptClient(str(tmp_path), session_cookie="cookie", workspace_name="Team Alpha")
     popover = _FakeElement("workspace", items=[_FakeElement("Team Beta")])
@@ -258,4 +266,3 @@ async def test_try_skip_apps_at_work_selection_clicks_skip(tmp_path):
 
     assert selected is True
     assert page.skip.clicked is True
-

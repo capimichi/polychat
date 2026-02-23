@@ -24,6 +24,7 @@ class ChatGptChatMapper:
         return Chat(
             id=source.conversation_id,
             message=message,
+            image_url=source.image_download_url,
             metadata=ChatMetadata(
                 provider="chatgpt",
                 title=source.title,

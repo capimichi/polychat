@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime
 import logging
 import os
+import time
 from typing import Optional
 
 import requests
@@ -187,10 +188,8 @@ class ChatGptClient(AbstractClient):
         logger.info("Searching workspace '%s'", workspace_name)
         popover = await page.query_selector(".popover")
         if not popover:
-            logger.error("Workspace picker popover not found")
-            raise Exception(
-                f"Workspace picker non trovato: impossibile selezionare workspace '{workspace_name}'."
-            )
+            logger.info("Workspace picker popover not found; skipping workspace selection")
+            return
 
         popover_text = " ".join(((await popover.inner_text()) or "").lower().split())
         if "area di lavoro" not in popover_text and "workspace" not in popover_text:
@@ -281,17 +280,25 @@ class ChatGptClient(AbstractClient):
         conversation_url = f"https://chatgpt.com/backend-api/conversation/{conversation_id}"
         constraints = Screen(max_width=1920, max_height=1080)
         conversation_payload = {}
+        image_download_url = ""
         response_received = asyncio.Event()
+        last_image_seen_at = 0.0
 
         async def handle_response(response):
-            nonlocal conversation_payload
-            if response.url != conversation_url:
-                return
+            nonlocal conversation_payload, image_download_url, last_image_seen_at
             try:
-                conversation_payload = await response.json()
-                response_received.set()
+                if response.url == conversation_url:
+                    conversation_payload = await response.json()
+                    response_received.set()
+                    return
+
+                if "/backend-api/files/download/" in response.url and f"conversation_id={conversation_id}" in response.url:
+                    payload = await response.json()
+                    if isinstance(payload, dict) and payload.get("download_url"):
+                        image_download_url = payload["download_url"]
+                        last_image_seen_at = time.monotonic()
             except Exception as exc:
-                logger.warning("Error parsing conversation payload: %s", exc)
+                logger.warning("Error parsing ChatGPT response payload: %s", exc)
 
         async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
             context_options = {}
@@ -321,6 +328,13 @@ class ChatGptClient(AbstractClient):
             except Exception:
                 pass
 
+            if response_received.is_set() and last_image_seen_at > 0:
+                while True:
+                    elapsed = time.monotonic() - last_image_seen_at
+                    if elapsed >= 2.0:
+                        break
+                    await page.wait_for_timeout(200)
+
             try:
                 await context.storage_state(path=self.storage_state_path)
             except Exception as exc:
@@ -330,7 +344,35 @@ class ChatGptClient(AbstractClient):
 
         if not conversation_payload:
             raise Exception("Risposta conversazione non intercettata")
+        if image_download_url:
+            conversation_payload["image_download_url"] = image_download_url
         return conversation_payload
+
+    def proxy_download(self, download_url: str) -> tuple[bytes, int, str, str]:
+        """Proxy download usando il cookie ChatGPT in header Cookie."""
+        if not download_url:
+            raise ValueError("download_url mancante")
+        if not download_url.startswith("https://chatgpt.com/"):
+            raise ValueError("download_url non valida: deve iniziare con https://chatgpt.com/")
+
+        session_cookie = self._load_session_cookie()
+        headers = {
+            "Cookie": f"__Secure-next-auth.session-token={session_cookie}",
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/144.0.0.0 Safari/537.36"
+            ),
+        }
+
+        with requests.Session() as session:
+            response = session.get(download_url, headers=headers, timeout=60)
+            response.raise_for_status()
+            content = response.content
+            status_code = response.status_code
+            content_type = response.headers.get("content-type", "application/octet-stream")
+            content_disposition = response.headers.get("content-disposition", "")
+            return content, status_code, content_type, content_disposition
 
     @staticmethod
     def _auth_headers(session_cookie: str, account_id: str = "") -> dict:

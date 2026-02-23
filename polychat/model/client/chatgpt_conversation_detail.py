@@ -67,3 +67,4 @@ class ConversationDetail(BaseModel):
     memory_scope: Optional[str] = None
     context_scopes: Optional[Any] = None
     async_status: Optional[Any] = None
+    image_download_url: Optional[str] = None

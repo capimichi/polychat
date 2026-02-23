@@ -33,3 +33,10 @@ class ChatGptService:
             return self.chatgpt_chat_mapper.create_from(detail)
         except Exception as exc:
             raise Exception(f"Error fetching ChatGPT conversation: {exc}")
+
+    def proxy_download(self, download_url: str) -> tuple[bytes, int, str, str]:
+        """Proxy download file ChatGPT usando cookie di sessione."""
+        try:
+            return self.chatgpt_client.proxy_download(download_url)
+        except Exception as exc:
+            raise Exception(f"Error proxying ChatGPT download: {exc}")
