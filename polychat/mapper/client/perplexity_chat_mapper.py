@@ -11,6 +11,7 @@ class PerplexityChatMapper:
         return Chat(
             id=conversation_id,
             message=source.answer or "",
+            image_url=source.image_url,
             metadata=ChatMetadata(
                 provider="perplexity",
                 title=source.thread_title,

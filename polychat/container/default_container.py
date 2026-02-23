@@ -63,6 +63,7 @@ class DefaultContainer:
         self.api_port = int(os.environ.get('API_PORT', '8459'))
         self.session_dir_env = os.environ.get('SESSION_DIR', 'var/session')
         self.headless = os.environ.get('HEADLESS', 'true').lower() == 'true'
+        self.perplexity_session_cookie = os.environ.get('PERPLEXITY_SESSION_COOKIE', '')
         self.chatgpt_session_cookie = os.environ.get('CHATGPT_SESSION_COOKIE', '')
         self.chatgpt_workspace_name = os.environ.get('CHATGPT_WORKSPACE_NAME', '').strip()
 
@@ -74,7 +75,11 @@ class DefaultContainer:
         self.injector.binder.bind(ChatToApiMapper, to=chat_to_api_mapper)
 
         # Bind PerplexityClient with session_dir and headless
-        perplexity_client = PerplexityClient(self.session_dir, self.headless)
+        perplexity_client = PerplexityClient(
+            self.session_dir,
+            self.headless,
+            self.perplexity_session_cookie,
+        )
         self.injector.binder.bind(PerplexityClient, to=perplexity_client)
 
         # Bind PerplexityService

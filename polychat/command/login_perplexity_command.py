@@ -9,18 +9,16 @@ from polychat.service.perplexity_service import PerplexityService
 )
 def login_perplexity_command():
     """
-    Login to Perplexity AI by opening a browser and waiting 45 seconds for manual login.
-    The session will be saved for future requests.
+    Login to Perplexity salvando il cookie __Secure-next-auth.session-token.
     """
     default_container: DefaultContainer = DefaultContainer.getInstance()
     perplexity_service: PerplexityService = default_container.get(PerplexityService)
 
-    click.echo('Opening browser for Perplexity login...')
-    click.echo('Please login manually. You have 45 seconds.')
+    click.echo('Inserisci il cookie __Secure-next-auth.session-token:')
+    session_cookie = click.prompt('Cookie', hide_input=False)
 
     try:
-        # Run the async login method
-        asyncio.run(perplexity_service.login())
-        click.echo('Login successful! Session saved.')
+        asyncio.run(perplexity_service.login(session_cookie))
+        click.echo('Cookie salvato correttamente.')
     except Exception as e:
         click.echo(f'Login failed: {str(e)}', err=True)

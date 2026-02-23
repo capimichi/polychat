@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import BaseModel, ConfigDict
 
 from polychat.model.service.chat_metadata import ChatMetadata
@@ -10,4 +12,5 @@ class Chat(BaseModel):
 
     id: str
     message: str
+    image_url: Optional[str] = None
     metadata: ChatMetadata

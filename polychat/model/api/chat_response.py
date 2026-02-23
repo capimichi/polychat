@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -8,3 +10,4 @@ class ChatResponse(BaseModel):
 
     id: str
     message: str
+    image_url: Optional[str] = None

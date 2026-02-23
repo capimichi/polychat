@@ -26,6 +26,13 @@ class PerplexityController:
             summary="Send a message to Perplexity",
             response_model=ChatResponse,
         )
+        self.router.add_api_route(
+            "/{conversation_id}",
+            self.get_chat_response,
+            methods=["GET"],
+            summary="Get a Perplexity conversation by id",
+            response_model=ChatResponse,
+        )
 
     async def create_chat(self, request: ChatRequest) -> ChatResponse:
         """Send a chat message to Perplexity."""
@@ -40,4 +47,15 @@ class PerplexityController:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error processing request: {str(e)}",
+            )
+
+    async def get_chat_response(self, conversation_id: str) -> ChatResponse:
+        """Get Perplexity response by conversation id (slug)."""
+        try:
+            chat = await self.perplexity_service.get_conversation(conversation_id)
+            return self.chat_to_api_mapper.create_from(chat)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error fetching conversation: {str(e)}",
             )

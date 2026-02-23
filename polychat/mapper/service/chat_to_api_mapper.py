@@ -9,4 +9,5 @@ class ChatToApiMapper:
         return ChatResponse(
             id=chat.id,
             message=chat.message,
+            image_url=chat.image_url,
         )

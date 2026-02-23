@@ -6,12 +6,12 @@ from pydantic import BaseModel, computed_field
 class PerplexityResponse(BaseModel):
     """Complete Perplexity API response structure."""
 
-    backend_uuid: str
+    backend_uuid: Optional[str] = None
     context_uuid: Optional[str] = None
-    uuid: str
+    uuid: Optional[str] = None
     frontend_context_uuid: Optional[str] = None
     frontend_uuid: Optional[str] = None
-    text: str
+    text: Optional[str] = None
     thread_title: Optional[str] = None
     related_queries: Optional[List[str]] = None
     display_model: Optional[str] = None
@@ -49,7 +49,8 @@ class PerplexityResponse(BaseModel):
             return None
 
         for block in self.blocks:
-            if block.get("intended_usage") == "ask_text":
+            intended_usage = block.get("intended_usage", "")
+            if intended_usage == "ask_text" or str(intended_usage).startswith("ask_text"):
                 markdown_block = block.get("markdown_block")
                 if markdown_block:
                     return markdown_block.get("answer")
@@ -75,5 +76,19 @@ class PerplexityResponse(BaseModel):
                         return image.get("url")
 
                 return None
+            if block.get("intended_usage") == "pro_search_steps":
+                plan_block = block.get("plan_block") or {}
+                steps = plan_block.get("steps") or []
+                for step in steps:
+                    if step.get("step_type") != "GENERATE_IMAGE_RESULTS":
+                        continue
+                    content = step.get("generate_image_results_content") or {}
+                    image_results = content.get("image_results") or []
+                    if image_results:
+                        first = image_results[0] or {}
+                        if first.get("url"):
+                            return first.get("url")
+                        if first.get("thumbnail_url"):
+                            return first.get("thumbnail_url")
 
         return None

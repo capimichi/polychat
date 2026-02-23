@@ -12,13 +12,10 @@ class PerplexityService:
         self.perplexity_client = perplexity_client
         self.perplexity_chat_mapper = perplexity_chat_mapper
 
-    async def login(self):
-        """
-        Perform login to Perplexity AI.
-        Opens browser and waits 45 seconds for manual login.
-        """
+    async def login(self, session_cookie: str) -> None:
+        """Salva il cookie di sessione Perplexity."""
         try:
-            await self.perplexity_client.login()
+            await self.perplexity_client.login(session_cookie)
         except Exception as e:
             raise Exception(f"Error during Perplexity login: {str(e)}")
 
@@ -29,3 +26,11 @@ class PerplexityService:
             return self.perplexity_chat_mapper.create_from(response)
         except Exception as e:
             raise Exception(f"Error asking Perplexity: {str(e)}")
+
+    async def get_conversation(self, conversation_id: str) -> Chat:
+        """Recupera la conversazione Perplexity a partire dallo slug."""
+        try:
+            response = await self.perplexity_client.get_conversation(conversation_id)
+            return self.perplexity_chat_mapper.create_from(response)
+        except Exception as e:
+            raise Exception(f"Error fetching Perplexity conversation: {str(e)}")

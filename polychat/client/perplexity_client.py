@@ -3,7 +3,6 @@ import asyncio
 from camoufox.async_api import AsyncCamoufox
 from typing import Optional
 from injector import inject
-import json
 from browserforge.fingerprints import Screen
 
 from polychat.client.abstract_client import AbstractClient
@@ -13,31 +12,22 @@ from polychat.model.client.perplexity_response import PerplexityResponse
 class PerplexityClient(AbstractClient):
 
     @inject
-    def __init__(self, session_dir: str, headless: bool = False):
+    def __init__(self, session_dir: str, headless: bool = False, session_cookie: str = ""):
         self.session_dir = session_dir
         self.storage_state_path = os.path.join(session_dir, "perplexity_state.json")
+        self.cookie_path = os.path.join(session_dir, "perplexity_cookie.txt")
         self.headless = headless
+        self.session_cookie = session_cookie
 
-    async def login(self):
-        """
-        Open browser and wait 45 seconds for manual login.
-        Saves the storage state for future sessions.
-        """
-        async with AsyncCamoufox() as browser:
-            context = await browser.new_context()
-            page = await context.new_page()
+    async def login(self, session_cookie: str) -> None:
+        """Salva il cookie di sessione fornito manualmente."""
+        cookie_value = (session_cookie or "").strip()
+        if not cookie_value:
+            raise ValueError("Cookie di sessione mancante")
 
-            # Navigate to Perplexity
-            await page.goto("https://www.perplexity.ai/")
-
-            # Wait 45 seconds for manual login
-            await asyncio.sleep(45)
-
-            # Save storage state
-            await context.storage_state(path=self.storage_state_path)
-
-            await page.close()
-            await context.close()
+        os.makedirs(self.session_dir, exist_ok=True)
+        with open(self.cookie_path, "w", encoding="utf-8") as f:
+            f.write(cookie_value)
 
     async def ask(self, message: str, chat_slug: Optional[str] = None, type_input: bool = True) -> PerplexityResponse:
         """
@@ -50,19 +40,31 @@ class PerplexityClient(AbstractClient):
         Returns:
             The complete response content from Perplexity
         """
-        constrains = Screen(max_width=1920, max_height=1080)
+        constraints = Screen(max_width=1920, max_height=1080)
+        session_cookie = self._load_session_cookie()
 
         async def _attempt() -> PerplexityResponse:
             async with AsyncCamoufox(
                 headless=self.headless,
                 humanize=True,
-                screen=constrains
+                screen=constraints
                 ) as browser:
                 context_options = {}
                 if os.path.exists(self.storage_state_path):
-                    context_options['storage_state'] = self.storage_state_path
+                    context_options["storage_state"] = self.storage_state_path
 
                 context = await browser.new_context(**context_options)
+                await context.add_cookies([
+                    {
+                        "name": "__Secure-next-auth.session-token",
+                        "value": session_cookie,
+                        "domain": ".perplexity.ai",
+                        "path": "/",
+                        "httpOnly": True,
+                        "secure": True,
+                        "sameSite": "None",
+                    }
+                ])
                 page = await context.new_page()
 
                 if chat_slug:
@@ -77,63 +79,151 @@ class PerplexityClient(AbstractClient):
                 else:
                     await self._paste_message(page, "#ask-input", message)
 
-                await page.keyboard.press("Enter")
+                await page.wait_for_timeout(1000)
+                await page.click("button.interactable.rounded-full.bg-button-bg")
+                await page.wait_for_timeout(1000)
+                await page.goto("https://www.perplexity.ai/library", wait_until="domcontentloaded")
+                await page.wait_for_selector('a[href*="/search/"]', timeout=20_000)
 
-                response_content: PerplexityResponse = await self._wait_for_response(page)
+                current_slug = ""
+                search_links = await page.query_selector_all('a[href*="/search/"]')
+                for link in search_links:
+                    href = await link.get_attribute("href")
+                    slug_from_href = self._extract_slug_from_href(href or "")
+                    if slug_from_href:
+                        current_slug = slug_from_href
+                        break
+
+                if not current_slug:
+                    raise Exception("Slug Perplexity non trovato dopo invio messaggio")
+
+                response_content: PerplexityResponse = await self._wait_for_thread_response(
+                    page,
+                    current_slug,
+                )
+
+                try:
+                    await context.storage_state(path=self.storage_state_path)
+                except Exception:
+                    pass
 
                 await page.close()
                 await context.close()
 
                 return response_content
 
-        return await self._retry_async(_attempt, attempts=3)
+        return await _attempt()
 
-    async def _wait_for_response(self, page) -> PerplexityResponse:
-        """
-        Wait for and capture the complete streamed response from Perplexity.
-        Monitors requests matching the SSE endpoint and validates it with Pydantic.
-        """
+    async def get_conversation(self, conversation_id: str) -> PerplexityResponse:
+        """Recupera il dettaglio del thread Perplexity a partire dallo slug."""
+        if not conversation_id:
+            raise ValueError("conversation_id mancante")
 
-        response_content = ""
+        session_cookie = self._load_session_cookie()
+        constraints = Screen(max_width=1920, max_height=1080)
+
+        async with AsyncCamoufox(
+            headless=self.headless,
+            humanize=True,
+            screen=constraints,
+        ) as browser:
+            context_options = {}
+            if os.path.exists(self.storage_state_path):
+                context_options["storage_state"] = self.storage_state_path
+
+            context = await browser.new_context(**context_options)
+            await context.add_cookies([
+                {
+                    "name": "__Secure-next-auth.session-token",
+                    "value": session_cookie,
+                    "domain": ".perplexity.ai",
+                    "path": "/",
+                    "httpOnly": True,
+                    "secure": True,
+                    "sameSite": "None",
+                }
+            ])
+            page = await context.new_page()
+            response_content = await self._wait_for_thread_response(page, conversation_id)
+
+            try:
+                await context.storage_state(path=self.storage_state_path)
+            except Exception:
+                pass
+
+            await page.close()
+            await context.close()
+
+        return response_content
+
+    async def _wait_for_thread_response(self, page, slug: str) -> PerplexityResponse:
+        """
+        Attende la response AJAX /rest/thread/{slug} e valida l'ultima entry.
+        """
+        response_content = None
         response_received = asyncio.Event()
+        thread_path = f"/rest/thread/{slug}"
 
-        async def handle_response(response):
+        async def handle_response(response):  # noqa: ANN001
             nonlocal response_content
-            if "/rest/sse/perplexity_ask" in response.url:
+            if thread_path in response.url:
                 try:
-                    # Read the complete response body
-                    body = await response.body()
-                    raw_content = body.decode('utf-8')
-
-                    # Parse SSE stream to find final message
-                    lines = raw_content.split('\n')
-
-                    for i, line in enumerate(lines):
-                        if "event: message" in line:
-                            # Check the next line for data
-                            if i + 1 < len(lines):
-                                next_line = lines[i + 1]
-                                if next_line.startswith("data: "):
-                                    json_str = next_line[6:]  # Remove "data: " prefix
-                                    try:
-                                        data = json.loads(json_str)
-                                        if data.get("final_sse_message") == True:
-                                            response_content = json_str
-                                            response_received.set()
-                                            break
-                                    except json.JSONDecodeError:
-                                        continue
+                    payload = await response.json()
+                    entries = payload.get("entries") if isinstance(payload, dict) else None
+                    if not entries:
+                        return
+                    last_entry = entries[-1]
+                    if not isinstance(last_entry, dict):
+                        return
+                    response_content = last_entry
+                    response_received.set()
                 except Exception as e:
                     print(f"Error reading response: {e}")
 
-        # Listen for responses
         page.on("response", handle_response)
+        await page.goto(f"https://www.perplexity.ai/search/{slug}")
 
-        # Wait for the response (with timeout)
         try:
             await asyncio.wait_for(response_received.wait(), timeout=120)
         except asyncio.TimeoutError:
-            raise Exception("Timeout waiting for Perplexity response")
+            raise Exception("Timeout waiting for Perplexity thread response")
 
-        # Validate and return the PerplexityResponse using Pydantic
-        return PerplexityResponse.model_validate_json(response_content)
+        return PerplexityResponse.model_validate(response_content)
+
+    def _load_session_cookie(self) -> str:
+        cookie_value = (self.session_cookie or "").strip()
+        if cookie_value:
+            return cookie_value
+
+        if os.path.exists(self.cookie_path):
+            with open(self.cookie_path, "r", encoding="utf-8") as f:
+                cookie_value = f.read().strip()
+            if cookie_value:
+                return cookie_value
+
+        raise ValueError("PERPLEXITY_SESSION_COOKIE mancante o vuoto")
+
+    @classmethod
+    def _extract_slug_from_url(cls, current_url: str) -> str:
+        if not current_url:
+            return ""
+        return cls._extract_slug_from_href(current_url)
+
+    @staticmethod
+    def _extract_slug_from_href(href: str) -> str:
+        if not href:
+            return ""
+
+        prefix = "/search/"
+        if "://www.perplexity.ai/search/" in href:
+            prefix = "://www.perplexity.ai/search/"
+        elif "://perplexity.ai/search/" in href:
+            prefix = "://perplexity.ai/search/"
+
+        idx = href.find(prefix)
+        if idx == -1:
+            return ""
+
+        slug = href[idx + len(prefix):]
+        slug = slug.split("?", 1)[0].split("#", 1)[0]
+        return slug.rstrip("/")
