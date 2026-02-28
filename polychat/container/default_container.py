@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from typing import Literal
 
 from injector import Injector
 from dotenv import load_dotenv
@@ -62,10 +63,19 @@ class DefaultContainer:
         self.api_host = os.environ.get('API_HOST', '0.0.0.0')
         self.api_port = int(os.environ.get('API_PORT', '8459'))
         self.session_dir_env = os.environ.get('SESSION_DIR', 'var/session')
-        self.headless = os.environ.get('HEADLESS', 'true').lower() == 'true'
+        self.headless = self._parse_headless_mode(os.environ.get('HEADLESS', 'true'))
         self.perplexity_session_cookie = os.environ.get('PERPLEXITY_SESSION_COOKIE', '')
         self.chatgpt_session_cookie = os.environ.get('CHATGPT_SESSION_COOKIE', '')
         self.chatgpt_workspace_name = os.environ.get('CHATGPT_WORKSPACE_NAME', '').strip()
+
+    @staticmethod
+    def _parse_headless_mode(value: str | None) -> bool | Literal["virtual"]:
+        normalized = (value or "true").strip().lower()
+        if normalized == "virtual":
+            return "virtual"
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        return False
 
     def _init_logging(self):
         logging.basicConfig(filename=self.app_log_path, level=logging.INFO, filemode='a', format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s', datefmt='%H:%M:%S')

@@ -1,6 +1,6 @@
 import asyncio
 import os
-from typing import Optional
+from typing import Literal
 
 from browserforge.fingerprints import Screen
 from camoufox.async_api import AsyncCamoufox
@@ -16,7 +16,7 @@ class KimiClient(AbstractClient):
     BASE_URL = "https://www.kimi.com/"
 
     @inject
-    def __init__(self, session_dir: str, headless: bool = False):
+    def __init__(self, session_dir: str, headless: bool | Literal["virtual"] = False):
         self.session_dir = session_dir
         self.storage_state_path = os.path.join(session_dir, "kimi_state.json")
         self.headless = headless

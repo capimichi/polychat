@@ -1,7 +1,7 @@
 import os
 import asyncio
 from camoufox.async_api import AsyncCamoufox
-from typing import Optional
+from typing import Literal, Optional
 from injector import inject
 from browserforge.fingerprints import Screen
 
@@ -12,7 +12,12 @@ from polychat.model.client.perplexity_response import PerplexityResponse
 class PerplexityClient(AbstractClient):
 
     @inject
-    def __init__(self, session_dir: str, headless: bool = False, session_cookie: str = ""):
+    def __init__(
+        self,
+        session_dir: str,
+        headless: bool | Literal["virtual"] = False,
+        session_cookie: str = "",
+    ):
         self.session_dir = session_dir
         self.storage_state_path = os.path.join(session_dir, "perplexity_state.json")
         self.cookie_path = os.path.join(session_dir, "perplexity_cookie.txt")

@@ -3,7 +3,7 @@ from datetime import datetime
 import logging
 import os
 import time
-from typing import Optional
+from typing import Literal, Optional
 
 import requests
 from browserforge.fingerprints import Screen
@@ -35,7 +35,7 @@ class ChatGptClient(AbstractClient):
     def __init__(
         self,
         session_dir: str,
-        headless: bool = False,
+        headless: bool | Literal["virtual"] = False,
         session_cookie: str = "",
         workspace_name: str = "",
     ):
