@@ -21,8 +21,8 @@ playwright==1.55.0
 pydantic==2.12.3
 pydantic_core==2.41.4
 pyee==13.0.0
-pyobjc-core==12.0
-pyobjc-framework-Cocoa==12.0
+pyobjc-core==12.0; sys_platform == "darwin"
+pyobjc-framework-Cocoa==12.0; sys_platform == "darwin"
 PySocks==1.7.1
 python-dotenv==1.2.1
 PyYAML==6.0.3

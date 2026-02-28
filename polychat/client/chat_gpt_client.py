@@ -29,6 +29,7 @@ class ChatGptClient(AbstractClient):
     PROMPT_MAX_ATTEMPTS = 3
     POST_NAVIGATION_WAIT_MS = 400
     POST_RECOVERY_WAIT_MS = 250
+    PROMPT_SHORTCUT_WAIT_MS = 1_000
     WAIT_FOR_URL_TIMEOUT_MS = 8_000
 
     @inject
@@ -112,6 +113,7 @@ class ChatGptClient(AbstractClient):
                 except Exception:
                     logger.info("Network idle not reached quickly; continuing anyway")
                 await page.wait_for_timeout(self.POST_NAVIGATION_WAIT_MS)
+                await self._ensure_workspace_active(page)
 
                 if self.workspace_name:
                     logger.info("Workspace configured; selecting workspace by name: %s", self.workspace_name)
@@ -122,32 +124,38 @@ class ChatGptClient(AbstractClient):
                     except Exception as exc:
                         logger.warning("Unable to persist ChatGPT storage state: %s", exc)
 
-                for attempt in range(1, self.PROMPT_MAX_ATTEMPTS + 1):
-                    try:
-                        logger.info(
-                            "Waiting for prompt textarea (attempt=%s/%s, timeout_ms=%s)",
-                            attempt,
-                            self.PROMPT_MAX_ATTEMPTS,
-                            self.PROMPT_WAIT_TIMEOUT_MS,
-                        )
-                        await page.wait_for_selector(self.PROMPT_SELECTOR, timeout=self.PROMPT_WAIT_TIMEOUT_MS)
-                        logger.info("Prompt textarea found")
-                        break
-                    except Exception as exc:
-                        logger.info("Prompt textarea not found on attempt %s; trying recovery actions", attempt)
-                        recovered = await self._try_select_other_work_category(page)
-                        if not recovered:
-                            recovered = await self._try_skip_apps_at_work_selection(page)
-                        if not recovered:
-                            logger.error("No recovery action matched; raising timeout")
-                            await self._raise_input_timeout(page, exc)
+                await self._focus_prompt_input(page)
 
                 if type_input:
                     logger.info("Typing prompt content in textarea")
-                    await self._type_message(page, self.PROMPT_SELECTOR, message)
+                    try:
+                        await self._type_into_focused_input(page, message)
+                    except Exception:
+                        await self._ensure_workspace_active(page)
+                        await self._focus_prompt_input(page)
+                        try:
+                            await self._type_into_focused_input(page, message)
+                        except Exception as retry_exc:
+                            screenshot_path = await self._capture_debug_screenshot(page, "input-interaction")
+                            raise RuntimeError(
+                                f"Errore durante interazione con input '{self.PROMPT_SELECTOR}'. "
+                                f"Screenshot creato: {screenshot_path}."
+                            ) from retry_exc
                 else:
                     logger.info("Pasting prompt content in textarea")
-                    await self._paste_message(page, self.PROMPT_SELECTOR, message)
+                    try:
+                        await self._paste_into_focused_input(page, message)
+                    except Exception:
+                        await self._ensure_workspace_active(page)
+                        await self._focus_prompt_input(page)
+                        try:
+                            await self._paste_into_focused_input(page, message)
+                        except Exception as retry_exc:
+                            screenshot_path = await self._capture_debug_screenshot(page, "input-interaction")
+                            raise RuntimeError(
+                                f"Errore durante interazione con input '{self.PROMPT_SELECTOR}'. "
+                                f"Screenshot creato: {screenshot_path}."
+                            ) from retry_exc
 
                 await page.keyboard.press("Enter")
                 logger.info("Prompt submitted; waiting for conversation URL")
@@ -211,16 +219,54 @@ class ChatGptClient(AbstractClient):
         logger.error("Workspace not found in picker: %s", workspace_name)
         raise Exception(f"Workspace '{workspace_name}' non trovato.")
 
-    async def _raise_input_timeout(self, page, original_exception: Exception) -> None:
-        screenshots_dir = os.path.join(os.path.dirname(self.session_dir), "screenshots")
-        os.makedirs(screenshots_dir, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        screenshot_path = os.path.join(screenshots_dir, f"chatgpt-input-timeout-{timestamp}.png")
+    async def _ensure_workspace_active(self, page) -> None:
+        needs_selection = "workspace/deactivated" in (page.url or "")
+        if not needs_selection:
+            needs_selection = (await page.query_selector("text=Select a workspace to continue")) is not None
+        if not needs_selection:
+            return
 
-        try:
-            await page.screenshot(path=screenshot_path, full_page=True)
-        except Exception:
-            screenshot_path = f"{screenshot_path} (screenshot non riuscito)"
+        logger.info("Detected deactivated workspace screen; selecting an active workspace")
+        if self.workspace_name:
+            try:
+                await self._select_workspace_by_name(page, self.workspace_name)
+                await page.wait_for_timeout(self.POST_RECOVERY_WAIT_MS)
+                return
+            except Exception as exc:
+                logger.warning("Configured workspace selection failed: %s", exc)
+
+        options = await page.query_selector_all("button, [role='button'], [role='option'], [role='menuitem']")
+        for option in options:
+            text = " ".join(((await option.inner_text()) or "").lower().split())
+            if not text:
+                continue
+            if "select a workspace to continue" in text:
+                continue
+            if "deactivated" in text:
+                continue
+            await option.click()
+            await page.wait_for_timeout(self.POST_RECOVERY_WAIT_MS)
+            return
+
+        raise Exception(
+            "Workspace disattivato e nessun workspace alternativo selezionabile trovato."
+        )
+
+    async def _focus_prompt_input(self, page) -> None:
+        logger.info("Focusing prompt input via shortcut ControlOrMeta+Shift+O")
+        await page.keyboard.press("ControlOrMeta+Shift+O")
+        await page.wait_for_timeout(self.PROMPT_SHORTCUT_WAIT_MS)
+
+    async def _type_into_focused_input(self, page, content: str) -> None:
+        safe_content = self._sanitize_message(content)
+        await page.keyboard.type(safe_content)
+
+    async def _paste_into_focused_input(self, page, content: str) -> None:
+        safe_content = self._sanitize_message(content)
+        await page.keyboard.insert_text(safe_content)
+
+    async def _raise_input_timeout(self, page, original_exception: Exception) -> None:
+        screenshot_path = await self._capture_debug_screenshot(page, "input-timeout")
         logger.error("Prompt textarea timeout. Screenshot path: %s", screenshot_path)
 
         raise TimeoutError(
@@ -229,6 +275,20 @@ class ChatGptClient(AbstractClient):
             f"Screenshot creato: {screenshot_path}. "
             "Verifica se è necessario fornire CHATGPT_WORKSPACE_NAME per selezionare il workspace corretto."
         ) from original_exception
+
+    async def _capture_debug_screenshot(self, page, reason: str) -> str:
+        screenshots_dir = os.path.join(os.path.dirname(self.session_dir), "screenshots")
+        os.makedirs(screenshots_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        screenshot_path = os.path.join(screenshots_dir, f"chatgpt-{reason}-{timestamp}.png")
+
+        try:
+            await page.screenshot(path=screenshot_path, full_page=True)
+            return screenshot_path
+        except Exception as exc:
+            failed_path = f"{screenshot_path} (screenshot non riuscito)"
+            logger.warning("Unable to create debug screenshot: %s", exc)
+            return failed_path
 
     async def _try_select_other_work_category(self, page) -> bool:
         prompt = await page.query_selector("text=What kind of work do you do?")

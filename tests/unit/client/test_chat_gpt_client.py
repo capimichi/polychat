@@ -9,6 +9,12 @@ class _FakeKeyboard:
     async def press(self, _key: str) -> None:
         return None
 
+    async def type(self, _content: str) -> None:
+        return None
+
+    async def insert_text(self, _content: str) -> None:
+        return None
+
 
 class _FakePage:
     def __init__(self):
@@ -243,6 +249,25 @@ async def test_raise_input_timeout_creates_screenshot_and_hint(tmp_path):
         await client._raise_input_timeout(page, TimeoutError("missing input"))
 
     screenshots = list((tmp_path / "var" / "screenshots").glob("chatgpt-input-timeout-*.png"))
+    assert len(screenshots) == 1
+
+
+@pytest.mark.asyncio
+async def test_ask_creates_screenshot_when_input_interaction_fails(tmp_path, monkeypatch):
+    session_dir = tmp_path / "var" / "session"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    client = ChatGptClient(str(session_dir), session_cookie="cookie")
+    monkeypatch.setattr("polychat.client.chat_gpt_client.AsyncCamoufox", _FakeAsyncCamoufox)
+
+    async def _broken_type_message(_page, _message):
+        raise Exception("element detached from DOM")
+
+    monkeypatch.setattr(client, "_type_into_focused_input", _broken_type_message)
+
+    with pytest.raises(RuntimeError, match="Screenshot creato"):
+        await client.ask("hello")
+
+    screenshots = list((tmp_path / "var" / "screenshots").glob("chatgpt-input-interaction-*.png"))
     assert len(screenshots) == 1
 
 
