@@ -382,12 +382,13 @@ class ChatGptClient(AbstractClient):
             url = f"https://chatgpt.com/c/{conversation_id}"
             await page.goto(url)
             await page.wait_for_load_state("networkidle")
-            await page.wait_for_timeout(10_000)
+            wait_timeout_ms = 30_000
+            poll_interval_ms = 1_000
+            elapsed_ms = 0
 
-            try:
-                await asyncio.wait_for(response_received.wait(), timeout=30)
-            except Exception:
-                pass
+            while not response_received.is_set() and elapsed_ms < wait_timeout_ms:
+                await page.wait_for_timeout(poll_interval_ms)
+                elapsed_ms += poll_interval_ms
 
             if response_received.is_set() and last_image_seen_at > 0:
                 while True:
