@@ -20,6 +20,7 @@ class _FakePage:
     def __init__(self):
         self.url = "https://chatgpt.com/c/test-conversation"
         self.keyboard = _FakeKeyboard()
+        self.waited_timeouts = []
 
     async def goto(self, _url: str, **_kwargs) -> None:
         return None
@@ -28,6 +29,7 @@ class _FakePage:
         return None
 
     async def wait_for_timeout(self, _timeout: int) -> None:
+        self.waited_timeouts.append(_timeout)
         return None
 
     async def query_selector(self, _selector: str):
@@ -206,6 +208,28 @@ async def test_ask_does_not_select_workspace_when_workspace_name_is_empty(tmp_pa
 
     assert result.conversation_id == "test-conversation"
     assert called is False
+
+
+@pytest.mark.asyncio
+async def test_ask_waits_five_seconds_after_submit_before_close(tmp_path, monkeypatch):
+    client = ChatGptClient(str(tmp_path), session_cookie="cookie", workspace_name="")
+    page = _FakePage()
+
+    class _TrackingAsyncCamoufox:
+        def __init__(self, **_kwargs):
+            self._browser = _FakeBrowser(page)
+
+        async def __aenter__(self) -> _FakeBrowser:
+            return self._browser
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("polychat.client.chat_gpt_client.AsyncCamoufox", _TrackingAsyncCamoufox)
+
+    await client.ask("hello")
+
+    assert 5_000 in page.waited_timeouts
 
 
 @pytest.mark.asyncio

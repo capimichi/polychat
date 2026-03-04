@@ -31,6 +31,7 @@ class ChatGptClient(AbstractClient):
     POST_RECOVERY_WAIT_MS = 250
     PROMPT_SHORTCUT_WAIT_MS = 1_000
     WAIT_FOR_URL_TIMEOUT_MS = 8_000
+    POST_SUBMIT_WAIT_MS = 5_000
 
     @inject
     def __init__(
@@ -164,6 +165,9 @@ class ChatGptClient(AbstractClient):
                     await page.wait_for_url("**/c/**", timeout=self.WAIT_FOR_URL_TIMEOUT_MS)
                 except Exception:
                     logger.info("Conversation URL not detected within timeout; continuing")
+
+                logger.info("Waiting %sms before closing page after submit", self.POST_SUBMIT_WAIT_MS)
+                await page.wait_for_timeout(self.POST_SUBMIT_WAIT_MS)
 
                 current_url = page.url
                 logger.info("Current page URL after submit: %s", current_url)
