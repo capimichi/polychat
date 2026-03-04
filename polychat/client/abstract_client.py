@@ -1,7 +1,12 @@
 import asyncio
+from datetime import datetime
+import logging
+import os
 import shutil
 import subprocess
 from typing import Awaitable, Callable, Optional, TypeVar
+
+import requests
 
 
 T = TypeVar("T")
@@ -9,6 +14,32 @@ T = TypeVar("T")
 
 class AbstractClient:
     """Base client condiviso per incollare messaggi tramite clipboard nel browser."""
+
+    def __init__(self) -> None:
+        self._http_logger = logging.getLogger("polychat.http")
+
+    def _log_http_request(self, method: str, url: str) -> None:
+        timestamp = datetime.now().isoformat(timespec="seconds")
+        self._http_logger.info("%s %s %s", timestamp, method.upper(), url)
+
+    def _attach_page_request_logger(self, page) -> None:  # noqa: ANN001
+        if not hasattr(page, "on"):
+            return
+
+        def _handle_request(request):  # noqa: ANN001
+            method = getattr(request, "method", "GET")
+            url = getattr(request, "url", "")
+            self._log_http_request(str(method), str(url))
+
+        page.on("request", _handle_request)
+
+    async def _goto(self, page, url: str, **kwargs):  # noqa: ANN001
+        self._log_http_request("GET", url)
+        return await page.goto(url, **kwargs)
+
+    def _requests_request(self, session, method: str, url: str, **kwargs):  # noqa: ANN001
+        self._log_http_request(method, url)
+        return session.request(method=method.upper(), url=url, **kwargs)
 
     async def _paste_message(self, page, selector: str, content: str) -> None:
         """Copia il contenuto in clipboard e lo incolla nel campo indicato."""
@@ -60,3 +91,20 @@ class AbstractClient:
                     raise
                 await asyncio.sleep(delay_seconds * attempt)
         raise last_exc if last_exc else Exception("Operazione fallita senza eccezione.")
+
+    @staticmethod
+    def _clear_session_dir(path: str) -> None:
+        if os.path.exists(path):
+            shutil.rmtree(path)
+
+    def _fetch_page_content(self, url: str, headers: Optional[dict] = None, timeout: int = 15) -> str:
+        with requests.Session() as session:
+            response = self._requests_request(
+                session,
+                "GET",
+                url,
+                headers=headers or {},
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return response.text or ""

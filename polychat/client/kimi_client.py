@@ -1,6 +1,7 @@
 import asyncio
 import os
-from typing import Literal
+from typing import Literal, Optional
+from urllib.parse import urlparse
 
 from browserforge.fingerprints import Screen
 from camoufox.async_api import AsyncCamoufox
@@ -17,18 +18,22 @@ class KimiClient(AbstractClient):
 
     @inject
     def __init__(self, session_dir: str, headless: bool | Literal["virtual"] = False):
-        self.session_dir = session_dir
-        self.storage_state_path = os.path.join(session_dir, "kimi_state.json")
+        super().__init__()
+        self.session_dir = os.path.join(session_dir, "kimi")
+        self.storage_state_path = os.path.join(self.session_dir, "kimi_state.json")
         self.headless = headless
+        os.makedirs(self.session_dir, exist_ok=True)
 
     async def login(self) -> None:
         """Apre il browser per consentire il login manuale e salva lo stato della sessione."""
+        os.makedirs(self.session_dir, exist_ok=True)
         constraints = Screen(max_width=1920, max_height=1080)
         async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
             context = await browser.new_context()
             page = await context.new_page()
+            self._attach_page_request_logger(page)
 
-            await page.goto(self.BASE_URL)
+            await self._goto(page, self.BASE_URL)
             await asyncio.sleep(60)
 
             await context.storage_state(path=self.storage_state_path)
@@ -36,8 +41,53 @@ class KimiClient(AbstractClient):
             await page.close()
             await context.close()
 
-    async def ask(self, message: str, type_input: bool = True) -> KimiResponse:
-        """Invia un prompt a Kimi e restituisce la risposta come KimiResponse."""
+    async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> KimiResponse:
+        """Invia un prompt a Kimi e restituisce il solo chat_id."""
+
+        async def _attempt() -> KimiResponse:
+            constraints = Screen(max_width=1920, max_height=1080)
+
+            async with AsyncCamoufox(
+                headless=self.headless,
+                humanize=True,
+                screen=constraints
+            ) as browser:
+                context_options = {}
+                if os.path.exists(self.storage_state_path):
+                    context_options["storage_state"] = self.storage_state_path
+
+                context = await browser.new_context(**context_options)
+                page = await context.new_page()
+                self._attach_page_request_logger(page)
+
+                url = f"{self.BASE_URL}chat/{chat_id}" if chat_id else self.BASE_URL
+                await self._goto(page, url)
+                if type_input:
+                    await self._type_message(page, ".chat-input", message)
+                else:
+                    await self._paste_message(page, ".chat-input", message)
+
+                await page.keyboard.press("Enter")
+
+                try:
+                    await page.wait_for_url("**/chat/**", timeout=12_000)
+                except Exception:
+                    pass
+                await page.wait_for_timeout(1_000)
+                conversation_id = self._extract_chat_id_from_url(page.url or "")
+                if not conversation_id:
+                    raise ValueError("Chat ID Kimi non trovato nella URL dopo l'invio del messaggio")
+
+                await page.close()
+                await context.close()
+
+            return KimiResponse(chat_id=conversation_id, message="")
+
+        return await self._retry_async(_attempt, attempts=3)
+
+    async def get_conversation(self, conversation_id: str) -> KimiResponse:
+        if not conversation_id:
+            raise ValueError("conversation_id mancante")
 
         async def _attempt() -> KimiResponse:
             constraints = Screen(max_width=1920, max_height=1080)
@@ -54,14 +104,8 @@ class KimiClient(AbstractClient):
 
                 context = await browser.new_context(**context_options)
                 page = await context.new_page()
-
-                await page.goto(self.BASE_URL)
-                if type_input:
-                    await self._type_message(page, ".chat-input", message)
-                else:
-                    await self._paste_message(page, ".chat-input", message)
-
-                await page.keyboard.press("Enter")
+                self._attach_page_request_logger(page)
+                await self._goto(page, f"{self.BASE_URL}chat/{conversation_id}")
 
                 await asyncio.sleep(5)
 
@@ -93,6 +137,33 @@ class KimiClient(AbstractClient):
                 await page.close()
                 await context.close()
 
-            return KimiResponse(message=content_html)
+            return KimiResponse(chat_id=conversation_id, message=content_html)
 
         return await self._retry_async(_attempt, attempts=3)
+
+    def logout(self) -> None:
+        self._clear_session_dir(self.session_dir)
+
+    def status(self) -> dict:
+        self._fetch_page_content(self.BASE_URL)
+        return {
+            "provider": "kimi",
+            "is_available": True,
+            "is_logged_in": None,
+            "detail": "TODO: implement Kimi login detection",
+        }
+
+    @staticmethod
+    def _extract_chat_id_from_url(url: str) -> str:
+        if not url:
+            return ""
+
+        parsed = urlparse(url)
+        path = (parsed.path or "").strip("/")
+        if not path:
+            return ""
+
+        parts = [part for part in path.split("/") if part]
+        if len(parts) >= 2 and parts[0] == "chat":
+            return parts[1]
+        return ""

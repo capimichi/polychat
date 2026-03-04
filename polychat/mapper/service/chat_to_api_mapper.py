@@ -1,13 +1,17 @@
-from polychat.model.api.chat_response import ChatResponse
+from polychat.model.api.chat_response import ChatMessageResponse, ChatStartResponse
 from polychat.model.service.chat import Chat
 
 
 class ChatToApiMapper:
     """Mapper domain -> API."""
 
-    def create_from(self, chat: Chat) -> ChatResponse:
-        return ChatResponse(
-            id=chat.id,
+    def create_start_from(self, chat: Chat) -> ChatStartResponse:
+        return ChatStartResponse(
+            chat_id=chat.id,
+        )
+
+    def create_message_from(self, chat: Chat) -> ChatMessageResponse:
+        return ChatMessageResponse(
             message=chat.message,
             image_url=chat.image_url,
         )

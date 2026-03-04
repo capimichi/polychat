@@ -1,3 +1,5 @@
+from typing import Optional
+
 from injector import inject
 
 from polychat.client.kimi_client import KimiClient
@@ -16,10 +18,23 @@ class KimiService:
         """Esegue il login a Kimi tramite il client."""
         await self.kimi_client.login()
 
-    async def ask(self, message: str, type_input: bool = True) -> Chat:
+    def logout(self) -> None:
+        self.kimi_client.logout()
+
+    def status(self) -> dict:
+        return self.kimi_client.status()
+
+    async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> Chat:
         """Invia una domanda a Kimi e restituisce la risposta come Chat."""
         try:
-            response = await self.kimi_client.ask(message, type_input=type_input)
+            response = await self.kimi_client.ask(message, chat_id, type_input=type_input)
             return self.kimi_chat_mapper.create_from(response)
         except Exception as exc:
             raise Exception(f"Error asking Kimi: {exc}")
+
+    async def get_conversation(self, conversation_id: str) -> Chat:
+        try:
+            response = await self.kimi_client.get_conversation(conversation_id)
+            return self.kimi_chat_mapper.create_from(response)
+        except Exception as exc:
+            raise Exception(f"Error fetching Kimi conversation: {exc}")

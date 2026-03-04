@@ -6,4 +6,5 @@ class KimiResponse(BaseModel):
 
     model_config = ConfigDict(validate_assignment=True)
 
+    chat_id: str = ""
     message: str

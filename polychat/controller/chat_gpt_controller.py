@@ -6,7 +6,7 @@ from injector import inject
 
 from polychat.mapper.service.chat_to_api_mapper import ChatToApiMapper
 from polychat.model.chat_request import ChatRequest
-from polychat.model.api.chat_response import ChatResponse
+from polychat.model.api.chat_response import ChannelStatusResponse, ChatMessageResponse, ChatStartResponse
 from polychat.service.chat_gpt_service import ChatGptService
 
 
@@ -26,7 +26,20 @@ class ChatGptController:
             self.create_chat,
             methods=["POST"],
             summary="Invia un messaggio a ChatGPT",
-            response_model=ChatResponse,
+            response_model=ChatStartResponse,
+        )
+        self.router.add_api_route(
+            "/logout",
+            self.logout,
+            methods=["POST"],
+            summary="Logout ChatGPT",
+        )
+        self.router.add_api_route(
+            "/status",
+            self.get_status,
+            methods=["GET"],
+            summary="Status ChatGPT",
+            response_model=ChannelStatusResponse,
         )
         self.router.add_api_route(
             "/download-proxy",
@@ -39,16 +52,10 @@ class ChatGptController:
             self.get_chat_response,
             methods=["GET"],
             summary="Recupera una conversazione ChatGPT",
-            response_model=ChatResponse,
-        )
-        self.router.add_api_route(
-            "/logout",
-            self.logout,
-            methods=["POST"],
-            summary="Logout ChatGPT",
+            response_model=ChatMessageResponse,
         )
 
-    async def create_chat(self, request: ChatRequest) -> ChatResponse:
+    async def create_chat(self, request: ChatRequest) -> ChatStartResponse:
         """Invia un messaggio a ChatGPT e restituisce il testo generato."""
         try:
             chat = await self.chatgpt_service.ask(
@@ -56,18 +63,18 @@ class ChatGptController:
                 request.chat_slug,
                 type_input=request.type,
             )
-            return self.chat_to_api_mapper.create_from(chat)
+            return self.chat_to_api_mapper.create_start_from(chat)
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error processing ChatGPT request: {exc}",
             )
 
-    async def get_chat_response(self, conversation_id: str) -> ChatResponse:
+    async def get_chat_response(self, conversation_id: str) -> ChatMessageResponse:
         """Recupera la risposta di ChatGPT a partire dall'ID conversazione."""
         try:
             chat = await self.chatgpt_service.get_conversation(conversation_id)
-            return self.chat_to_api_mapper.create_from(chat)
+            return self.chat_to_api_mapper.create_message_from(chat)
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -83,6 +90,15 @@ class ChatGptController:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error processing ChatGPT logout: {exc}",
+            )
+
+    def get_status(self) -> ChannelStatusResponse:
+        try:
+            return ChannelStatusResponse.model_validate(self.chatgpt_service.status())
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error fetching ChatGPT status: {exc}",
             )
 
     def proxy_download(self, download_url: str = Query(...)) -> StreamingResponse:

@@ -41,16 +41,33 @@ class ChatGptClient(AbstractClient):
         session_cookie: str = "",
         workspace_name: str = "",
     ):
-        self.session_dir = session_dir
-        self.storage_state_path = os.path.join(session_dir, "chatgpt_state.json")
+        super().__init__()
+        self.session_dir = os.path.join(session_dir, "chatgpt")
+        self.storage_state_path = os.path.join(self.session_dir, "chatgpt_state.json")
         self.headless = headless
         self.session_cookie = session_cookie
         self.workspace_name = (workspace_name or "").strip()
+        os.makedirs(self.session_dir, exist_ok=True)
 
     def logout(self) -> None:
-        """Rimuove solo lo storage state salvato."""
-        if os.path.exists(self.storage_state_path):
-            os.remove(self.storage_state_path)
+        """Rimuove la cartella sessione ChatGPT."""
+        self._clear_session_dir(self.session_dir)
+
+    def status(self) -> dict:
+        session_cookie = (self.session_cookie or "").strip()
+        headers = {}
+        if session_cookie:
+            headers["Cookie"] = f"__Secure-next-auth.session-token={session_cookie}"
+
+        content = self._fetch_page_content("https://chatgpt.com/", headers=headers)
+        marker = '"authStatus":"logged_in"'
+        is_logged_in = marker in content
+        return {
+            "provider": "chatgpt",
+            "is_available": True,
+            "is_logged_in": is_logged_in,
+            "detail": None if is_logged_in else "Marker auth non trovato nella homepage",
+        }
 
     def get_conversations(self, offset: int = 0, limit: int = 28) -> ConversationList:
         """Recupera la lista delle conversazioni esistenti."""
@@ -59,7 +76,13 @@ class ChatGptClient(AbstractClient):
         url = self.CHAT_LIST_URL.format(offset=offset, limit=limit)
 
         with requests.Session() as session:
-            response = session.get(url, headers=self._auth_headers(session_cookie, ""), timeout=30)
+            response = self._requests_request(
+                session,
+                "GET",
+                url,
+                headers=self._auth_headers(session_cookie, ""),
+                timeout=30,
+            )
             response.raise_for_status()
             return ConversationList.model_validate_json(response.text)
 
@@ -105,10 +128,11 @@ class ChatGptClient(AbstractClient):
                     }
                 ])
                 page = await context.new_page()
+                self._attach_page_request_logger(page)
 
                 url = f"https://chatgpt.com/c/{chat_id}" if chat_id else "https://chatgpt.com/"
                 logger.info("Opening ChatGPT page: %s", url)
-                await page.goto(url, wait_until="domcontentloaded", timeout=12_000)
+                await self._goto(page, url, wait_until="domcontentloaded", timeout=12_000)
                 try:
                     await page.wait_for_load_state("networkidle", timeout=4_000)
                 except Exception:
@@ -381,10 +405,11 @@ class ChatGptClient(AbstractClient):
                 }
             ])
             page = await context.new_page()
+            self._attach_page_request_logger(page)
             page.on("response", handle_response)
 
             url = f"https://chatgpt.com/c/{conversation_id}"
-            await page.goto(url)
+            await self._goto(page, url)
             await page.wait_for_load_state("networkidle")
             wait_timeout_ms = 30_000
             poll_interval_ms = 1_000
@@ -432,7 +457,7 @@ class ChatGptClient(AbstractClient):
         }
 
         with requests.Session() as session:
-            response = session.get(download_url, headers=headers, timeout=60)
+            response = self._requests_request(session, "GET", download_url, headers=headers, timeout=60)
             response.raise_for_status()
             content = response.content
             status_code = response.status_code

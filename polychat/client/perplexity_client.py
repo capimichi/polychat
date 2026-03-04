@@ -18,11 +18,14 @@ class PerplexityClient(AbstractClient):
         headless: bool | Literal["virtual"] = False,
         session_cookie: str = "",
     ):
-        self.session_dir = session_dir
-        self.storage_state_path = os.path.join(session_dir, "perplexity_state.json")
-        self.cookie_path = os.path.join(session_dir, "perplexity_cookie.txt")
+        super().__init__()
+        self.session_dir = os.path.join(session_dir, "perplexity")
+        self.storage_state_path = os.path.join(self.session_dir, "perplexity_state.json")
+        self.cookie_path = os.path.join(self.session_dir, "perplexity_cookie.txt")
         self.headless = headless
         self.session_cookie = session_cookie
+        self.base_url = "https://www.perplexity.ai/"
+        os.makedirs(self.session_dir, exist_ok=True)
 
     async def login(self, session_cookie: str) -> None:
         """Salva il cookie di sessione fornito manualmente."""
@@ -71,13 +74,14 @@ class PerplexityClient(AbstractClient):
                     }
                 ])
                 page = await context.new_page()
+                self._attach_page_request_logger(page)
 
                 if chat_slug:
                     url = f"https://www.perplexity.ai/search/{chat_slug}"
                 else:
                     url = "https://www.perplexity.ai/"
 
-                await page.goto(url)
+                await self._goto(page, url)
 
                 if type_input:
                     await self._type_message(page, "#ask-input", message)
@@ -87,7 +91,7 @@ class PerplexityClient(AbstractClient):
                 await page.wait_for_timeout(1000)
                 await page.click("button.interactable.rounded-full.bg-button-bg")
                 await page.wait_for_timeout(1000)
-                await page.goto("https://www.perplexity.ai/library", wait_until="domcontentloaded")
+                await self._goto(page, "https://www.perplexity.ai/library", wait_until="domcontentloaded")
                 await page.wait_for_selector('a[href*="/search/"]', timeout=20_000)
 
                 current_slug = ""
@@ -102,10 +106,7 @@ class PerplexityClient(AbstractClient):
                 if not current_slug:
                     raise Exception("Slug Perplexity non trovato dopo invio messaggio")
 
-                response_content: PerplexityResponse = await self._wait_for_thread_response(
-                    page,
-                    current_slug,
-                )
+                response_content = PerplexityResponse(thread_url_slug=current_slug)
 
                 try:
                     await context.storage_state(path=self.storage_state_path)
@@ -118,6 +119,18 @@ class PerplexityClient(AbstractClient):
                 return response_content
 
         return await _attempt()
+
+    def logout(self) -> None:
+        self._clear_session_dir(self.session_dir)
+
+    def status(self) -> dict:
+        self._fetch_page_content(self.base_url)
+        return {
+            "provider": "perplexity",
+            "is_available": True,
+            "is_logged_in": None,
+            "detail": "TODO: implement Perplexity login detection",
+        }
 
     async def get_conversation(self, conversation_id: str) -> PerplexityResponse:
         """Recupera il dettaglio del thread Perplexity a partire dallo slug."""
@@ -149,6 +162,7 @@ class PerplexityClient(AbstractClient):
                 }
             ])
             page = await context.new_page()
+            self._attach_page_request_logger(page)
             response_content = await self._wait_for_thread_response(page, conversation_id, post_navigation_wait_ms=10_000)
 
             try:
@@ -186,7 +200,7 @@ class PerplexityClient(AbstractClient):
                     print(f"Error reading response: {e}")
 
         page.on("response", handle_response)
-        await page.goto(f"https://www.perplexity.ai/search/{slug}")
+        await self._goto(page, f"https://www.perplexity.ai/search/{slug}")
         if post_navigation_wait_ms > 0:
             await page.wait_for_timeout(post_navigation_wait_ms)
 

@@ -8,7 +8,7 @@ class KimiChatMapper:
 
     def create_from(self, source: KimiResponse) -> Chat:
         return Chat(
-            id="",
+            id=source.chat_id,
             message=source.message,
             metadata=ChatMetadata(
                 provider="kimi",
