@@ -9,16 +9,20 @@ from dotenv import load_dotenv
 from polychat.client.chat_gpt_client import ChatGptClient
 from polychat.client.kimi_client import KimiClient
 from polychat.client.perplexity_client import PerplexityClient
+from polychat.client.qwen_client import QwenClient
 from polychat.service.chat_gpt_service import ChatGptService
 from polychat.service.kimi_service import KimiService
 from polychat.service.perplexity_service import PerplexityService
+from polychat.service.qwen_service import QwenService
 from polychat.controller.kimi_controller import KimiController
 from polychat.controller.chat_gpt_controller import ChatGptController
 from polychat.controller.perplexity_controller import PerplexityController
 from polychat.controller.deepseek_controller import DeepseekController
+from polychat.controller.qwen_controller import QwenController
 from polychat.mapper.client.chatgpt_chat_mapper import ChatGptChatMapper
 from polychat.mapper.client.kimi_chat_mapper import KimiChatMapper
 from polychat.mapper.client.perplexity_chat_mapper import PerplexityChatMapper
+from polychat.mapper.client.qwen_chat_mapper import QwenChatMapper
 from polychat.mapper.service.chat_to_api_mapper import ChatToApiMapper
 
 
@@ -67,6 +71,7 @@ class DefaultContainer:
         self.perplexity_session_cookie = os.environ.get('PERPLEXITY_SESSION_COOKIE', '')
         self.chatgpt_session_cookie = os.environ.get('CHATGPT_SESSION_COOKIE', '')
         self.chatgpt_workspace_name = os.environ.get('CHATGPT_WORKSPACE_NAME', '').strip()
+        self.qwen_session_cookie = os.environ.get('QWEN_SESSION_COOKIE', '')
 
     @staticmethod
     def _parse_headless_mode(value: str | None) -> bool | Literal["virtual"]:
@@ -138,3 +143,21 @@ class DefaultContainer:
         # Bind DeepseekController (placeholder, no dependencies)
         deepseek_controller = DeepseekController()
         self.injector.binder.bind(DeepseekController, to=deepseek_controller)
+
+        # Bind QwenClient
+        qwen_client = QwenClient(
+            self.session_dir,
+            self.headless,
+            self.qwen_session_cookie,
+        )
+        self.injector.binder.bind(QwenClient, to=qwen_client)
+
+        # Bind QwenService
+        qwen_chat_mapper = QwenChatMapper()
+        self.injector.binder.bind(QwenChatMapper, to=qwen_chat_mapper)
+        qwen_service = QwenService(qwen_client, qwen_chat_mapper)
+        self.injector.binder.bind(QwenService, to=qwen_service)
+
+        # Bind QwenController
+        qwen_controller = QwenController(qwen_service, chat_to_api_mapper)
+        self.injector.binder.bind(QwenController, to=qwen_controller)

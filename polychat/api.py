@@ -8,6 +8,7 @@ from polychat.controller.deepseek_controller import DeepseekController
 from polychat.controller.kimi_controller import KimiController
 from polychat.controller.perplexity_controller import PerplexityController
 from polychat.controller.chat_gpt_controller import ChatGptController
+from polychat.controller.qwen_controller import QwenController
 
 
 # Creazione dell'istanza dell'applicazione FastAPI
@@ -24,12 +25,14 @@ perplexity_chat_controller: PerplexityController = default_container.get(Perplex
 kimi_chat_controller: KimiController = default_container.get(KimiController)
 deepseek_chat_controller: DeepseekController = default_container.get(DeepseekController)
 chatgpt_chat_controller: ChatGptController = default_container.get(ChatGptController)
+qwen_chat_controller: QwenController = default_container.get(QwenController)
 
 # Includiamo i router dei controller nell'app
 app.include_router(perplexity_chat_controller.router)
 app.include_router(kimi_chat_controller.router)
 app.include_router(deepseek_chat_controller.router)
 app.include_router(chatgpt_chat_controller.router)
+app.include_router(qwen_chat_controller.router)
 
 # Configurazione CORS per consentire richieste da altre origini
 app.add_middleware(
