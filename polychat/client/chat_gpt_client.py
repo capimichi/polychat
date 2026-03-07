@@ -126,13 +126,13 @@ class ChatGptClient(AbstractClient):
             response.raise_for_status()
             return ConversationList.model_validate_json(response.text)
 
-    async def get_conversation(self, conversation_id: str) -> ConversationDetail:
+    async def get_conversation(self, chat_id: str) -> ConversationDetail:
         """Recupera i dettagli di una conversazione tramite il browser."""
-        if not conversation_id:
-            raise ValueError("conversation_id mancante")
+        if not chat_id:
+            raise ValueError("chat_id mancante")
 
         session_cookie = self._load_session_cookie()
-        payload = await self._fetch_conversation_via_browser(conversation_id, session_cookie)
+        payload = await self._fetch_conversation_via_browser(chat_id, session_cookie)
         return ConversationDetail.model_validate(payload)
 
     async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> ChatGptAskResult:
@@ -243,8 +243,8 @@ class ChatGptClient(AbstractClient):
                     logger.warning("Error while closing ChatGPT page/context: %s", exc)
 
             slug = self._extract_slug_from_url(current_url if 'current_url' in locals() else url)
-            logger.info("ChatGPT ask completed (conversation_id=%s)", slug)
-            return ChatGptAskResult(conversation_id=slug, message="")
+            logger.info("ChatGPT ask completed (chat_id=%s)", slug)
+            return ChatGptAskResult(chat_id=slug, message="")
 
         return await _attempt()
 
@@ -404,8 +404,8 @@ class ChatGptClient(AbstractClient):
         logger.info("Clicked 'Skip' in apps-at-work onboarding")
         return True
 
-    async def _fetch_conversation_via_browser(self, conversation_id: str, session_cookie: str) -> dict:
-        conversation_url = f"https://chatgpt.com/backend-api/conversation/{conversation_id}"
+    async def _fetch_conversation_via_browser(self, chat_id: str, session_cookie: str) -> dict:
+        conversation_url = f"https://chatgpt.com/backend-api/conversation/{chat_id}"
         constraints = Screen(max_width=1920, max_height=1080)
         conversation_payload = {}
         image_download_url = ""
@@ -420,7 +420,7 @@ class ChatGptClient(AbstractClient):
                     response_received.set()
                     return
 
-                if "/backend-api/files/download/" in response.url and f"conversation_id={conversation_id}" in response.url:
+                if "/backend-api/files/download/" in response.url and f"conversation_id={chat_id}" in response.url:
                     payload = await response.json()
                     if isinstance(payload, dict) and payload.get("download_url"):
                         image_download_url = payload["download_url"]
@@ -448,7 +448,7 @@ class ChatGptClient(AbstractClient):
             self._attach_page_request_logger(page)
             page.on("response", handle_response)
 
-            url = f"https://chatgpt.com/c/{conversation_id}"
+            url = f"https://chatgpt.com/c/{chat_id}"
             await self._goto(page, url)
             await page.wait_for_load_state("networkidle")
             wait_timeout_ms = 30_000

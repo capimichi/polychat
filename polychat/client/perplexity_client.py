@@ -37,13 +37,13 @@ class PerplexityClient(AbstractClient):
         with open(self.cookie_path, "w", encoding="utf-8") as f:
             f.write(cookie_value)
 
-    async def ask(self, message: str, chat_slug: Optional[str] = None, type_input: bool = True) -> PerplexityResponse:
+    async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> PerplexityResponse:
         """
         Ask a question to Perplexity AI and wait for the complete response.
 
         Args:
             message: The question/message to ask
-            chat_slug: Optional chat slug to continue an existing conversation
+            chat_id: Optional chat id to continue an existing conversation
 
         Returns:
             The complete response content from Perplexity
@@ -76,8 +76,8 @@ class PerplexityClient(AbstractClient):
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
 
-                if chat_slug:
-                    url = f"https://www.perplexity.ai/search/{chat_slug}"
+                if chat_id:
+                    url = f"https://www.perplexity.ai/search/{chat_id}"
                 else:
                     url = "https://www.perplexity.ai/"
 
@@ -162,21 +162,21 @@ class PerplexityClient(AbstractClient):
             return {
                 "provider": "perplexity",
                 "is_available": False,
-                "is_logged_in": None,
+                "is_logged_in": False,
                 "detail": f"TODO: implement Perplexity login detection (status check failed: {exc})",
             }
 
         return {
             "provider": "perplexity",
             "is_available": True,
-            "is_logged_in": None,
+            "is_logged_in": False,
             "detail": "TODO: implement Perplexity login detection",
         }
 
-    async def get_conversation(self, conversation_id: str) -> PerplexityResponse:
+    async def get_conversation(self, chat_id: str) -> PerplexityResponse:
         """Recupera il dettaglio del thread Perplexity a partire dallo slug."""
-        if not conversation_id:
-            raise ValueError("conversation_id mancante")
+        if not chat_id:
+            raise ValueError("chat_id mancante")
 
         session_cookie = self._load_session_cookie()
         constraints = Screen(max_width=1920, max_height=1080)
@@ -204,7 +204,7 @@ class PerplexityClient(AbstractClient):
             ])
             page = await context.new_page()
             self._attach_page_request_logger(page)
-            response_content = await self._wait_for_thread_response(page, conversation_id, post_navigation_wait_ms=10_000)
+            response_content = await self._wait_for_thread_response(page, chat_id, post_navigation_wait_ms=10_000)
 
             try:
                 await context.storage_state(path=self.storage_state_path)

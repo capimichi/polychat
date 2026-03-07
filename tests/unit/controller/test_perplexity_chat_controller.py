@@ -1,27 +1,45 @@
 import pytest
-from fastapi import HTTPException
 
-from polychat.controller.perplexity_chat_controller import PerplexityChatController
+from polychat.controller.perplexity_controller import PerplexityController
+from polychat.mapper.service.chat_to_api_mapper import ChatToApiMapper
 from polychat.model.chat_request import ChatRequest
+from polychat.model.service.chat import Chat
+from polychat.model.service.chat_metadata import ChatMetadata
+
+
+class _FakePerplexityService:
+    async def ask(self, message: str, chat_id: str | None = None, type_input: bool = True) -> Chat:
+        return Chat(id="chat-123", message="", metadata=ChatMetadata(provider="perplexity"))
+
+    async def get_conversation(self, chat_id: str) -> Chat:
+        return Chat(id=chat_id, message="answer", metadata=ChatMetadata(provider="perplexity"))
+
+    def logout(self) -> None:
+        return None
+
+    async def status(self) -> dict:
+        return {
+            "provider": "perplexity",
+            "is_available": True,
+            "is_logged_in": False,
+            "detail": "TODO",
+        }
 
 
 @pytest.mark.asyncio
-async def test_create_chat_returns_perplexity_response(chat_service, fake_perplexity_client):
-    controller = PerplexityChatController(chat_service)
-    request = ChatRequest(message="Hi there", chat_slug="slug-1")
+async def test_create_chat_returns_only_chat_id():
+    controller = PerplexityController(_FakePerplexityService(), ChatToApiMapper())
 
-    response = await controller.create_chat(request)
+    response = await controller.create_chat(ChatRequest(message="hello", chat_id="x"))
 
-    assert response.backend_uuid == "backend-uuid"
-    assert response.answer == "hello world"
-    assert fake_perplexity_client.calls == [("Hi there", "slug-1", True)]
+    assert response.chat_id == "chat-123"
 
 
 @pytest.mark.asyncio
-async def test_list_chats_not_implemented(chat_service):
-    controller = PerplexityChatController(chat_service)
+async def test_get_chat_response_returns_message_payload():
+    controller = PerplexityController(_FakePerplexityService(), ChatToApiMapper())
 
-    with pytest.raises(HTTPException) as exc:
-        await controller.list_chats()
+    response = await controller.get_chat_response("chat-123")
 
-    assert exc.value.status_code == 501
+    assert response.message == "answer"
+    assert response.image_url is None

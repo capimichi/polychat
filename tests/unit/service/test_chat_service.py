@@ -1,26 +1,27 @@
 import pytest
 
-from polychat.service.chat_service import ChatService
+from polychat.mapper.client.perplexity_chat_mapper import PerplexityChatMapper
+from polychat.service.perplexity_service import PerplexityService
 from tests.fakes.fake_perplexity_client import FakePerplexityClient
 from tests.fakes.perplexity_response_factory import make_perplexity_response
 
 
 @pytest.mark.asyncio
-async def test_chat_service_delegates_to_client():
+async def test_perplexity_service_delegates_to_client():
     fake_client = FakePerplexityClient(make_perplexity_response(answer="ok"))
-    service = ChatService(fake_client)
+    service = PerplexityService(fake_client, PerplexityChatMapper())
 
-    response = await service.ask("hello", chat_slug="chat-123")
+    response = await service.ask("hello", chat_id="chat-123")
 
     assert fake_client.calls == [("hello", "chat-123", True)]
-    assert response.answer == "ok"
+    assert response.id == "backend-uuid"
 
 
 @pytest.mark.asyncio
-async def test_chat_service_login_sets_flag():
+async def test_perplexity_service_login_sets_flag():
     fake_client = FakePerplexityClient()
-    service = ChatService(fake_client)
+    service = PerplexityService(fake_client, PerplexityChatMapper())
 
-    await service.login()
+    await service.login("cookie")
 
     assert fake_client.logged_in is True

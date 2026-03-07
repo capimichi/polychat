@@ -38,6 +38,7 @@ class QwenClient(AbstractClient):
 
     async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> QwenResponse:
         session_cookie = self._load_session_cookie()
+        requested_chat_id = chat_id
 
         async def _attempt() -> QwenResponse:
             constraints = Screen(max_width=1920, max_height=1080)
@@ -66,7 +67,7 @@ class QwenClient(AbstractClient):
 
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
-                url = f"{self.BASE_URL}c/{chat_id}" if chat_id else self.BASE_URL
+                url = f"{self.BASE_URL}c/{requested_chat_id}" if requested_chat_id else self.BASE_URL
                 await self._goto(page, url, wait_until="domcontentloaded", timeout=15_000)
                 await page.wait_for_selector(self.INPUT_SELECTOR, state="visible", timeout=20_000)
                 await page.wait_for_timeout(500)
@@ -82,13 +83,13 @@ class QwenClient(AbstractClient):
 
                 url = page.url or ""
 
-                conversation_id = self._extract_chat_id_from_url(url)
-                if not conversation_id:
+                extracted_chat_id = self._extract_chat_id_from_url(url)
+                if not extracted_chat_id:
                     raise ValueError("Chat ID Qwen non trovato nella URL dopo l'invio del messaggio")
 
                 response = QwenResponse(
                     data={
-                        "id": conversation_id,
+                        "id": extracted_chat_id,
                     }
                 )
 
@@ -149,25 +150,25 @@ class QwenClient(AbstractClient):
             return {
                 "provider": "qwen",
                 "is_available": False,
-                "is_logged_in": None,
+                "is_logged_in": False,
                 "detail": f"TODO: implement Qwen login detection (status check failed: {exc})",
             }
 
         return {
             "provider": "qwen",
             "is_available": True,
-            "is_logged_in": None,
+            "is_logged_in": False,
             "detail": "TODO: implement Qwen login detection",
         }
 
-    async def get_conversation(self, conversation_id: str) -> QwenResponse:
-        if not conversation_id:
-            raise ValueError("conversation_id mancante")
+    async def get_conversation(self, chat_id: str) -> QwenResponse:
+        if not chat_id:
+            raise ValueError("chat_id mancante")
 
         session_cookie = self._load_session_cookie()
 
         async def _attempt() -> QwenResponse:
-            return await self._poll_chat_response(conversation_id, session_cookie)
+            return await self._poll_chat_response(chat_id, session_cookie)
 
         return await self._retry_async(_attempt, attempts=3)
 

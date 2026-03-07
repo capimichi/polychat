@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 from typing import Literal
@@ -7,19 +6,26 @@ from injector import Injector
 from dotenv import load_dotenv
 
 from polychat.client.chat_gpt_client import ChatGptClient
+from polychat.client.deepseek_client import DeepseekClient
+from polychat.client.gemini_client import GeminiClient
 from polychat.client.kimi_client import KimiClient
 from polychat.client.perplexity_client import PerplexityClient
 from polychat.client.qwen_client import QwenClient
 from polychat.service.chat_gpt_service import ChatGptService
+from polychat.service.deepseek_service import DeepseekService
+from polychat.service.gemini_service import GeminiService
 from polychat.service.kimi_service import KimiService
 from polychat.service.perplexity_service import PerplexityService
 from polychat.service.qwen_service import QwenService
+from polychat.controller.gemini_controller import GeminiController
 from polychat.controller.kimi_controller import KimiController
 from polychat.controller.chat_gpt_controller import ChatGptController
 from polychat.controller.perplexity_controller import PerplexityController
 from polychat.controller.deepseek_controller import DeepseekController
 from polychat.controller.qwen_controller import QwenController
 from polychat.mapper.client.chatgpt_chat_mapper import ChatGptChatMapper
+from polychat.mapper.client.deepseek_chat_mapper import DeepseekChatMapper
+from polychat.mapper.client.gemini_chat_mapper import GeminiChatMapper
 from polychat.mapper.client.kimi_chat_mapper import KimiChatMapper
 from polychat.mapper.client.perplexity_chat_mapper import PerplexityChatMapper
 from polychat.mapper.client.qwen_chat_mapper import QwenChatMapper
@@ -72,6 +78,9 @@ class DefaultContainer:
         self.chatgpt_session_cookie = os.environ.get('CHATGPT_SESSION_COOKIE', '')
         self.chatgpt_workspace_name = os.environ.get('CHATGPT_WORKSPACE_NAME', '').strip()
         self.qwen_session_cookie = os.environ.get('QWEN_SESSION_COOKIE', '')
+        self.gemini_cookie_1psid = os.environ.get('GEMINI_COOKIE_1PSID', '')
+        self.gemini_cookie_1psidts = os.environ.get('GEMINI_COOKIE_1PSIDTS', '')
+        self.deepseek_user_token_json = os.environ.get('DEEPSEEK_USER_TOKEN_JSON', '')
 
     @staticmethod
     def _parse_headless_mode(value: str | None) -> bool | Literal["virtual"]:
@@ -140,10 +149,6 @@ class DefaultContainer:
         kimi_controller = KimiController(kimi_service, chat_to_api_mapper)
         self.injector.binder.bind(KimiController, to=kimi_controller)
 
-        # Bind DeepseekController (placeholder, no dependencies)
-        deepseek_controller = DeepseekController()
-        self.injector.binder.bind(DeepseekController, to=deepseek_controller)
-
         # Bind QwenClient
         qwen_client = QwenClient(
             self.session_dir,
@@ -161,3 +166,40 @@ class DefaultContainer:
         # Bind QwenController
         qwen_controller = QwenController(qwen_service, chat_to_api_mapper)
         self.injector.binder.bind(QwenController, to=qwen_controller)
+
+        # Bind DeepseekClient
+        deepseek_client = DeepseekClient(
+            self.session_dir,
+            self.headless,
+            self.deepseek_user_token_json,
+        )
+        self.injector.binder.bind(DeepseekClient, to=deepseek_client)
+
+        # Bind DeepseekService
+        deepseek_chat_mapper = DeepseekChatMapper()
+        self.injector.binder.bind(DeepseekChatMapper, to=deepseek_chat_mapper)
+        deepseek_service = DeepseekService(deepseek_client, deepseek_chat_mapper)
+        self.injector.binder.bind(DeepseekService, to=deepseek_service)
+
+        # Bind DeepseekController
+        deepseek_controller = DeepseekController(deepseek_service, chat_to_api_mapper)
+        self.injector.binder.bind(DeepseekController, to=deepseek_controller)
+
+        # Bind GeminiClient
+        gemini_client = GeminiClient(
+            self.session_dir,
+            self.headless,
+            self.gemini_cookie_1psid,
+            self.gemini_cookie_1psidts,
+        )
+        self.injector.binder.bind(GeminiClient, to=gemini_client)
+
+        # Bind GeminiService
+        gemini_chat_mapper = GeminiChatMapper()
+        self.injector.binder.bind(GeminiChatMapper, to=gemini_chat_mapper)
+        gemini_service = GeminiService(gemini_client, gemini_chat_mapper)
+        self.injector.binder.bind(GeminiService, to=gemini_service)
+
+        # Bind GeminiController
+        gemini_controller = GeminiController(gemini_service, chat_to_api_mapper)
+        self.injector.binder.bind(GeminiController, to=gemini_controller)

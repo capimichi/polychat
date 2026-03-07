@@ -48,7 +48,7 @@ class ChatGptController:
             summary="Proxy download file ChatGPT",
         )
         self.router.add_api_route(
-            "/{conversation_id}",
+            "/{chat_id}",
             self.get_chat_response,
             methods=["GET"],
             summary="Recupera una conversazione ChatGPT",
@@ -60,7 +60,7 @@ class ChatGptController:
         try:
             chat = await self.chatgpt_service.ask(
                 request.message,
-                request.chat_slug,
+                request.chat_id,
                 type_input=request.type,
             )
             return self.chat_to_api_mapper.create_start_from(chat)
@@ -70,10 +70,10 @@ class ChatGptController:
                 detail=f"Error processing ChatGPT request: {exc}",
             )
 
-    async def get_chat_response(self, conversation_id: str) -> ChatMessageResponse:
+    async def get_chat_response(self, chat_id: str) -> ChatMessageResponse:
         """Recupera la risposta di ChatGPT a partire dall'ID conversazione."""
         try:
-            chat = await self.chatgpt_service.get_conversation(conversation_id)
+            chat = await self.chatgpt_service.get_conversation(chat_id)
             return self.chat_to_api_mapper.create_message_from(chat)
         except Exception as exc:
             raise HTTPException(

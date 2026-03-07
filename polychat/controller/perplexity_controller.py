@@ -40,7 +40,7 @@ class PerplexityController:
             response_model=ChannelStatusResponse,
         )
         self.router.add_api_route(
-            "/{conversation_id}",
+            "/{chat_id}",
             self.get_chat_response,
             methods=["GET"],
             summary="Get a Perplexity conversation by id",
@@ -52,7 +52,7 @@ class PerplexityController:
         try:
             chat = await self.perplexity_service.ask(
                 request.message,
-                request.chat_slug,
+                request.chat_id,
                 type_input=request.type,
             )
             return self.chat_to_api_mapper.create_start_from(chat)
@@ -62,10 +62,10 @@ class PerplexityController:
                 detail=f"Error processing request: {str(e)}",
             )
 
-    async def get_chat_response(self, conversation_id: str) -> ChatMessageResponse:
+    async def get_chat_response(self, chat_id: str) -> ChatMessageResponse:
         """Get Perplexity response by conversation id (slug)."""
         try:
-            chat = await self.perplexity_service.get_conversation(conversation_id)
+            chat = await self.perplexity_service.get_conversation(chat_id)
             return self.chat_to_api_mapper.create_message_from(chat)
         except Exception as e:
             raise HTTPException(

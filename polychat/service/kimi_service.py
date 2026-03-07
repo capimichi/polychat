@@ -32,9 +32,9 @@ class KimiService:
         except Exception as exc:
             raise Exception(f"Error asking Kimi: {exc}")
 
-    async def get_conversation(self, conversation_id: str) -> Chat:
+    async def get_conversation(self, chat_id: str) -> Chat:
         try:
-            response = await self.kimi_client.get_conversation(conversation_id)
+            response = await self.kimi_client.get_conversation(chat_id)
             return self.kimi_chat_mapper.create_from(response)
         except Exception as exc:
             raise Exception(f"Error fetching Kimi conversation: {exc}")

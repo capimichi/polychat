@@ -74,20 +74,20 @@ class KimiClient(AbstractClient):
                 except Exception:
                     pass
                 await page.wait_for_timeout(1_000)
-                conversation_id = self._extract_chat_id_from_url(page.url or "")
-                if not conversation_id:
+                chat_id = self._extract_chat_id_from_url(page.url or "")
+                if not chat_id:
                     raise ValueError("Chat ID Kimi non trovato nella URL dopo l'invio del messaggio")
 
                 await page.close()
                 await context.close()
 
-            return KimiResponse(chat_id=conversation_id, message="")
+            return KimiResponse(chat_id=chat_id, message="")
 
         return await self._retry_async(_attempt, attempts=3)
 
-    async def get_conversation(self, conversation_id: str) -> KimiResponse:
-        if not conversation_id:
-            raise ValueError("conversation_id mancante")
+    async def get_conversation(self, chat_id: str) -> KimiResponse:
+        if not chat_id:
+            raise ValueError("chat_id mancante")
 
         async def _attempt() -> KimiResponse:
             constraints = Screen(max_width=1920, max_height=1080)
@@ -105,7 +105,7 @@ class KimiClient(AbstractClient):
                 context = await browser.new_context(**context_options)
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
-                await self._goto(page, f"{self.BASE_URL}chat/{conversation_id}")
+                await self._goto(page, f"{self.BASE_URL}chat/{chat_id}")
 
                 await asyncio.sleep(5)
 
@@ -137,7 +137,7 @@ class KimiClient(AbstractClient):
                 await page.close()
                 await context.close()
 
-            return KimiResponse(chat_id=conversation_id, message=content_html)
+            return KimiResponse(chat_id=chat_id, message=content_html)
 
         return await self._retry_async(_attempt, attempts=3)
 
@@ -170,14 +170,14 @@ class KimiClient(AbstractClient):
             return {
                 "provider": "kimi",
                 "is_available": False,
-                "is_logged_in": None,
+                "is_logged_in": False,
                 "detail": f"TODO: implement Kimi login detection (status check failed: {exc})",
             }
 
         return {
             "provider": "kimi",
             "is_available": True,
-            "is_logged_in": None,
+            "is_logged_in": False,
             "detail": "TODO: implement Kimi login detection",
         }
 

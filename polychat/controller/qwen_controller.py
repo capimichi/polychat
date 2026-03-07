@@ -39,7 +39,7 @@ class QwenController:
             response_model=ChannelStatusResponse,
         )
         self.router.add_api_route(
-            "/{conversation_id}",
+            "/{chat_id}",
             self.get_chat_response,
             methods=["GET"],
             summary="Recupera una conversazione Qwen",
@@ -50,7 +50,7 @@ class QwenController:
         try:
             chat = await self.qwen_service.ask(
                 request.message,
-                request.chat_slug,
+                request.chat_id,
                 type_input=request.type,
             )
             return self.chat_to_api_mapper.create_start_from(chat)
@@ -60,9 +60,9 @@ class QwenController:
                 detail=f"Error processing Qwen request: {exc}",
             )
 
-    async def get_chat_response(self, conversation_id: str) -> ChatMessageResponse:
+    async def get_chat_response(self, chat_id: str) -> ChatMessageResponse:
         try:
-            chat = await self.qwen_service.get_conversation(conversation_id)
+            chat = await self.qwen_service.get_conversation(chat_id)
             return self.chat_to_api_mapper.create_message_from(chat)
         except Exception as exc:
             raise HTTPException(

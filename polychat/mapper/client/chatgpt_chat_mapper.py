@@ -12,11 +12,11 @@ class ChatGptChatMapper:
     def create_from(self, source: ConversationDetail | ChatGptAskResult) -> Chat:
         if isinstance(source, ChatGptAskResult):
             return Chat(
-                id=source.conversation_id,
+                id=source.chat_id,
                 message=source.message,
                 metadata=ChatMetadata(
                     provider="chatgpt",
-                    raw_id=source.conversation_id,
+                    raw_id=source.chat_id,
                 ),
             )
 

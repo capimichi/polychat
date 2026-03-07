@@ -25,18 +25,18 @@ class PerplexityService:
     async def status(self) -> dict:
         return await self.perplexity_client.status()
 
-    async def ask(self, message: str, chat_slug: Optional[str] = None, type_input: bool = True) -> Chat:
+    async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> Chat:
         """Ask a question to Perplexity AI and return a Chat."""
         try:
-            response = await self.perplexity_client.ask(message, chat_slug, type_input=type_input)
+            response = await self.perplexity_client.ask(message, chat_id, type_input=type_input)
             return self.perplexity_chat_mapper.create_from(response)
         except Exception as e:
             raise Exception(f"Error asking Perplexity: {str(e)}")
 
-    async def get_conversation(self, conversation_id: str) -> Chat:
+    async def get_conversation(self, chat_id: str) -> Chat:
         """Recupera la conversazione Perplexity a partire dallo slug."""
         try:
-            response = await self.perplexity_client.get_conversation(conversation_id)
+            response = await self.perplexity_client.get_conversation(chat_id)
             return self.perplexity_chat_mapper.create_from(response)
         except Exception as e:
             raise Exception(f"Error fetching Perplexity conversation: {str(e)}")

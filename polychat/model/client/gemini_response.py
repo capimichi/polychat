@@ -1,10 +1,10 @@
 from pydantic import BaseModel, ConfigDict
 
 
-class ChatGptAskResult(BaseModel):
-    """Risultato minimale della richiesta ChatGPT via browser."""
+class GeminiResponse(BaseModel):
+    """Risposta di Gemini acquisita via browser."""
 
     model_config = ConfigDict(validate_assignment=True)
 
-    chat_id: str
+    chat_id: str = ""
     message: str

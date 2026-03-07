@@ -206,7 +206,7 @@ async def test_ask_does_not_select_workspace_when_workspace_name_is_empty(tmp_pa
 
     result = await client.ask("hello")
 
-    assert result.conversation_id == "test-conversation"
+    assert result.chat_id == "test-conversation"
     assert called is False
 
 
@@ -272,7 +272,7 @@ async def test_raise_input_timeout_creates_screenshot_and_hint(tmp_path):
     with pytest.raises(TimeoutError, match="CHATGPT_WORKSPACE_NAME"):
         await client._raise_input_timeout(page, TimeoutError("missing input"))
 
-    screenshots = list((tmp_path / "var" / "screenshots").glob("chatgpt-input-timeout-*.png"))
+    screenshots = list((tmp_path / "var" / "session" / "screenshots").glob("chatgpt-input-timeout-*.png"))
     assert len(screenshots) == 1
 
 
@@ -291,7 +291,7 @@ async def test_ask_creates_screenshot_when_input_interaction_fails(tmp_path, mon
     with pytest.raises(RuntimeError, match="Screenshot creato"):
         await client.ask("hello")
 
-    screenshots = list((tmp_path / "var" / "screenshots").glob("chatgpt-input-interaction-*.png"))
+    screenshots = list((tmp_path / "var" / "session" / "screenshots").glob("chatgpt-input-interaction-*.png"))
     assert len(screenshots) == 1
 
 

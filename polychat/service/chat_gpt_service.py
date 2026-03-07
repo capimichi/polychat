@@ -29,10 +29,10 @@ class ChatGptService:
         except Exception as exc:
             raise Exception(f"Error asking ChatGPT: {exc}")
 
-    async def get_conversation(self, conversation_id: str) -> Chat:
+    async def get_conversation(self, chat_id: str) -> Chat:
         """Recupera i dettagli di una conversazione ChatGPT."""
         try:
-            detail = await self.chatgpt_client.get_conversation(conversation_id)
+            detail = await self.chatgpt_client.get_conversation(chat_id)
             return self.chatgpt_chat_mapper.create_from(detail)
         except Exception as exc:
             raise Exception(f"Error fetching ChatGPT conversation: {exc}")
