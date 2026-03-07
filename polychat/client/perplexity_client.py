@@ -123,8 +123,49 @@ class PerplexityClient(AbstractClient):
     def logout(self) -> None:
         self._clear_session_dir(self.session_dir)
 
-    def status(self) -> dict:
-        self._fetch_page_content(self.base_url)
+    async def status(self) -> dict:
+        constraints = Screen(max_width=1920, max_height=1080)
+        session_cookie = self._load_session_cookie()
+        try:
+            async with AsyncCamoufox(
+                headless=self.headless,
+                humanize=True,
+                screen=constraints,
+            ) as browser:
+                context_options = {}
+                if os.path.exists(self.storage_state_path):
+                    context_options["storage_state"] = self.storage_state_path
+                context = await browser.new_context(**context_options)
+                await context.add_cookies([
+                    {
+                        "name": "__Secure-next-auth.session-token",
+                        "value": session_cookie,
+                        "domain": ".perplexity.ai",
+                        "path": "/",
+                        "httpOnly": True,
+                        "secure": True,
+                        "sameSite": "None",
+                    }
+                ])
+                page = await context.new_page()
+                self._attach_page_request_logger(page)
+                await self._goto(page, self.base_url, wait_until="domcontentloaded", timeout=20_000)
+                await page.wait_for_timeout(1_500)
+
+                try:
+                    await context.storage_state(path=self.storage_state_path)
+                except Exception:
+                    pass
+                await page.close()
+                await context.close()
+        except Exception as exc:
+            return {
+                "provider": "perplexity",
+                "is_available": False,
+                "is_logged_in": None,
+                "detail": f"TODO: implement Perplexity login detection (status check failed: {exc})",
+            }
+
         return {
             "provider": "perplexity",
             "is_available": True,

@@ -53,13 +53,53 @@ class ChatGptClient(AbstractClient):
         """Rimuove la cartella sessione ChatGPT."""
         self._clear_session_dir(self.session_dir)
 
-    def status(self) -> dict:
+    async def status(self) -> dict:
         session_cookie = (self.session_cookie or "").strip()
-        headers = {}
-        if session_cookie:
-            headers["Cookie"] = f"__Secure-next-auth.session-token={session_cookie}"
+        constraints = Screen(max_width=1920, max_height=1080)
+        content = ""
+        try:
+            async with AsyncCamoufox(
+                headless=self.headless,
+                humanize=True,
+                screen=constraints,
+            ) as browser:
+                context_options = {}
+                if os.path.exists(self.storage_state_path):
+                    context_options["storage_state"] = self.storage_state_path
+                context = await browser.new_context(**context_options)
+                if session_cookie:
+                    await context.add_cookies([
+                        {
+                            "name": "__Secure-next-auth.session-token",
+                            "value": session_cookie,
+                            "domain": "chatgpt.com",
+                            "path": "/",
+                            "httpOnly": True,
+                            "secure": True,
+                            "sameSite": "None",
+                        }
+                    ])
 
-        content = self._fetch_page_content("https://chatgpt.com/", headers=headers)
+                page = await context.new_page()
+                self._attach_page_request_logger(page)
+                await self._goto(page, "https://chatgpt.com/", wait_until="domcontentloaded", timeout=20_000)
+                await page.wait_for_timeout(1_500)
+                content = await page.content()
+
+                try:
+                    await context.storage_state(path=self.storage_state_path)
+                except Exception:
+                    pass
+                await page.close()
+                await context.close()
+        except Exception as exc:
+            return {
+                "provider": "chatgpt",
+                "is_available": False,
+                "is_logged_in": False,
+                "detail": f"Status check failed: {exc}",
+            }
+
         marker = '"authStatus":"logged_in"'
         is_logged_in = marker in content
         return {

@@ -22,8 +22,8 @@ class PerplexityService:
     def logout(self) -> None:
         self.perplexity_client.logout()
 
-    def status(self) -> dict:
-        return self.perplexity_client.status()
+    async def status(self) -> dict:
+        return await self.perplexity_client.status()
 
     async def ask(self, message: str, chat_slug: Optional[str] = None, type_input: bool = True) -> Chat:
         """Ask a question to Perplexity AI and return a Chat."""

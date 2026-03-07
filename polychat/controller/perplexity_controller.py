@@ -83,9 +83,9 @@ class PerplexityController:
                 detail=f"Error processing Perplexity logout: {exc}",
             )
 
-    def get_status(self) -> ChannelStatusResponse:
+    async def get_status(self) -> ChannelStatusResponse:
         try:
-            return ChannelStatusResponse.model_validate(self.perplexity_service.status())
+            return ChannelStatusResponse.model_validate(await self.perplexity_service.status())
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

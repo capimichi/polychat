@@ -17,8 +17,8 @@ class QwenService:
     def logout(self) -> None:
         self.qwen_client.logout()
 
-    def status(self) -> dict:
-        return self.qwen_client.status()
+    async def status(self) -> dict:
+        return await self.qwen_client.status()
 
     async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> Chat:
         try:

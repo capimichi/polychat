@@ -21,8 +21,8 @@ class KimiService:
     def logout(self) -> None:
         self.kimi_client.logout()
 
-    def status(self) -> dict:
-        return self.kimi_client.status()
+    async def status(self) -> dict:
+        return await self.kimi_client.status()
 
     async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> Chat:
         """Invia una domanda a Kimi e restituisce la risposta come Chat."""

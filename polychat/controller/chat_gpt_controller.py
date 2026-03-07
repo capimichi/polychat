@@ -92,9 +92,9 @@ class ChatGptController:
                 detail=f"Error processing ChatGPT logout: {exc}",
             )
 
-    def get_status(self) -> ChannelStatusResponse:
+    async def get_status(self) -> ChannelStatusResponse:
         try:
-            return ChannelStatusResponse.model_validate(self.chatgpt_service.status())
+            return ChannelStatusResponse.model_validate(await self.chatgpt_service.status())
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
