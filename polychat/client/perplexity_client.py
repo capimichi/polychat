@@ -92,18 +92,8 @@ class PerplexityClient(AbstractClient):
 
                 await page.wait_for_timeout(1000)
                 await page.click("button.interactable.rounded-full.bg-button-bg")
-                await page.wait_for_timeout(1000)
-                await self._goto(page, "https://www.perplexity.ai/library", wait_until="domcontentloaded")
-                await page.wait_for_selector('a[href*="/search/"]', timeout=20_000)
-
-                current_slug = ""
-                search_links = await page.query_selector_all('a[href*="/search/"]')
-                for link in search_links:
-                    href = await link.get_attribute("href")
-                    slug_from_href = self._extract_slug_from_href(href or "")
-                    if slug_from_href:
-                        current_slug = slug_from_href
-                        break
+                await page.wait_for_timeout(3_000)
+                current_slug = self._extract_slug_from_url(page.url or "")
 
                 if not current_slug:
                     raise Exception("Slug Perplexity non trovato dopo invio messaggio")
