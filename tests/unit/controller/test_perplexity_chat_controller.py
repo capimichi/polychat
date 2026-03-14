@@ -11,6 +11,9 @@ class _FakePerplexityService:
     async def ask(self, message: str, chat_id: str | None = None, type_input: bool = True) -> Chat:
         return Chat(id="chat-123", message="", metadata=ChatMetadata(provider="perplexity"))
 
+    async def ask_and_wait(self, message: str, chat_id: str | None = None, type_input: bool = True) -> Chat:
+        return Chat(id="chat-123", message="answer", image_url="https://img.test/x.png", metadata=ChatMetadata(provider="perplexity"))
+
     async def get_conversation(self, chat_id: str) -> Chat:
         return Chat(id=chat_id, message="answer", metadata=ChatMetadata(provider="perplexity"))
 
@@ -43,3 +46,14 @@ async def test_get_chat_response_returns_message_payload():
 
     assert response.message == "answer"
     assert response.image_url is None
+
+
+@pytest.mark.asyncio
+async def test_create_chat_and_wait_returns_complete_payload():
+    controller = PerplexityController(_FakePerplexityService(), ChatToApiMapper())
+
+    response = await controller.create_chat_and_wait(ChatRequest(message="hello", chat_id="x"))
+
+    assert response.chat_id == "chat-123"
+    assert response.message == "answer"
+    assert response.image_url == "https://img.test/x.png"

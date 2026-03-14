@@ -20,6 +20,16 @@ class ChatMessageResponse(BaseModel):
     image_url: Optional[str] = None
 
 
+class ChatCompleteResponse(BaseModel):
+    """Risposta API per invio messaggio con attesa del completamento."""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    chat_id: str
+    message: str
+    image_url: Optional[str] = None
+
+
 class ChannelStatusResponse(BaseModel):
     """Stato operativo/autenticazione di un canale."""
 
