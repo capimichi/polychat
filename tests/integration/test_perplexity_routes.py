@@ -11,6 +11,14 @@ class _FakePerplexityService:
     async def ask(self, message: str, chat_id: str | None = None, type_input: bool = True) -> Chat:
         return Chat(id="chat-abc", message="", metadata=ChatMetadata(provider="perplexity"))
 
+    async def ask_and_wait(self, message: str, chat_id: str | None = None, type_input: bool = True) -> Chat:
+        return Chat(
+            id="chat-abc",
+            message="from fake",
+            image_url="https://img.test/fake.png",
+            metadata=ChatMetadata(provider="perplexity"),
+        )
+
     async def get_conversation(self, chat_id: str) -> Chat:
         return Chat(id=chat_id, message="from fake", metadata=ChatMetadata(provider="perplexity"))
 
@@ -51,3 +59,17 @@ def test_get_perplexity_chat_returns_message_payload():
 
     assert response.status_code == 200
     assert response.json() == {"message": "from fake", "image_url": None}
+
+
+def test_post_perplexity_chat_complete_returns_full_payload():
+    app = create_test_app()
+    client = TestClient(app)
+
+    response = client.post("/perplexity/chats/complete", json={"message": "Hello!", "chat_id": None, "type": True})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "chat_id": "chat-abc",
+        "message": "from fake",
+        "image_url": "https://img.test/fake.png",
+    }

@@ -5,6 +5,7 @@ from injector import inject
 from polychat.client.chat_gpt_client import ChatGptClient
 from polychat.mapper.client.chatgpt_chat_mapper import ChatGptChatMapper
 from polychat.model.service.chat import Chat
+from polychat.service.chat_waiter import ChatWaiter
 
 
 class ChatGptService:
@@ -36,6 +37,14 @@ class ChatGptService:
             return self.chatgpt_chat_mapper.create_from(detail)
         except Exception as exc:
             raise Exception(f"Error fetching ChatGPT conversation: {exc}")
+
+    async def ask_and_wait(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> Chat:
+        """Invia una domanda e attende che la conversazione esponga la risposta finale."""
+        try:
+            started_chat = await self.ask(message, chat_id, type_input=type_input)
+            return await ChatWaiter.wait_for_completion(started_chat, self.get_conversation)
+        except Exception as exc:
+            raise Exception(f"Error asking ChatGPT and waiting for completion: {exc}")
 
     def proxy_download(self, download_url: str) -> tuple[bytes, int, str, str]:
         """Proxy download file ChatGPT usando cookie di sessione."""

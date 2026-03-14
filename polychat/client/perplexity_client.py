@@ -1,7 +1,7 @@
 import os
 import asyncio
 from camoufox.async_api import AsyncCamoufox
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from injector import inject
 from browserforge.fingerprints import Screen
 
@@ -10,6 +10,8 @@ from polychat.model.client.perplexity_response import PerplexityResponse
 
 
 class PerplexityClient(AbstractClient):
+    SESSION_URL_MARKER = "api/auth/session"
+    SESSION_RESPONSE_TIMEOUT_MS = 5_000
 
     @inject
     def __init__(
@@ -90,18 +92,8 @@ class PerplexityClient(AbstractClient):
 
                 await page.wait_for_timeout(1000)
                 await page.click("button.interactable.rounded-full.bg-button-bg")
-                await page.wait_for_timeout(1000)
-                await self._goto(page, "https://www.perplexity.ai/library", wait_until="domcontentloaded")
-                await page.wait_for_selector('a[href*="/search/"]', timeout=20_000)
-
-                current_slug = ""
-                search_links = await page.query_selector_all('a[href*="/search/"]')
-                for link in search_links:
-                    href = await link.get_attribute("href")
-                    slug_from_href = self._extract_slug_from_href(href or "")
-                    if slug_from_href:
-                        current_slug = slug_from_href
-                        break
+                await page.wait_for_timeout(3_000)
+                current_slug = self._extract_slug_from_url(page.url or "")
 
                 if not current_slug:
                     raise Exception("Slug Perplexity non trovato dopo invio messaggio")
@@ -126,6 +118,8 @@ class PerplexityClient(AbstractClient):
     async def status(self) -> dict:
         constraints = Screen(max_width=1920, max_height=1080)
         session_cookie = self._load_session_cookie()
+        session_payload = None
+        session_response_seen = False
         try:
             async with AsyncCamoufox(
                 headless=self.headless,
@@ -149,8 +143,15 @@ class PerplexityClient(AbstractClient):
                 ])
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
+                session_detection_task = asyncio.create_task(
+                    self._detect_login_state_from_session_response(page)
+                )
                 await self._goto(page, self.base_url, wait_until="domcontentloaded", timeout=20_000)
-                await page.wait_for_timeout(1_500)
+                try:
+                    await page.wait_for_timeout(1_500)
+                except Exception:
+                    pass
+                session_response_seen, session_payload = await session_detection_task
 
                 try:
                     await context.storage_state(path=self.storage_state_path)
@@ -163,14 +164,22 @@ class PerplexityClient(AbstractClient):
                 "provider": "perplexity",
                 "is_available": False,
                 "is_logged_in": False,
-                "detail": f"TODO: implement Perplexity login detection (status check failed: {exc})",
+                "detail": f"Status check failed: {exc}",
             }
+
+        is_logged_in = self._is_non_empty_session_payload(session_payload)
+        if is_logged_in:
+            detail = None
+        elif not session_response_seen:
+            detail = "Session response api/auth/session not detected within 5 seconds"
+        else:
+            detail = "Session response api/auth/session was empty or missing data"
 
         return {
             "provider": "perplexity",
             "is_available": True,
-            "is_logged_in": False,
-            "detail": "TODO: implement Perplexity login detection",
+            "is_logged_in": is_logged_in,
+            "detail": detail,
         }
 
     async def get_conversation(self, chat_id: str) -> PerplexityResponse:
@@ -289,3 +298,37 @@ class PerplexityClient(AbstractClient):
         slug = href[idx + len(prefix):]
         slug = slug.split("?", 1)[0].split("#", 1)[0]
         return slug.rstrip("/")
+
+    async def _detect_login_state_from_session_response(self, page) -> tuple[bool, Optional[Any]]:  # noqa: ANN001
+        response_received = asyncio.Event()
+        session_payload = None
+        session_response_seen = False
+
+        async def handle_response(response):  # noqa: ANN001
+            nonlocal session_payload, session_response_seen
+            if self.SESSION_URL_MARKER not in getattr(response, "url", ""):
+                return
+
+            session_response_seen = True
+            try:
+                session_payload = await response.json()
+            except Exception:
+                session_payload = None
+            finally:
+                response_received.set()
+
+        page.on("response", handle_response)
+
+        try:
+            await asyncio.wait_for(
+                response_received.wait(),
+                timeout=self.SESSION_RESPONSE_TIMEOUT_MS / 1000,
+            )
+        except asyncio.TimeoutError:
+            return False, None
+
+        return session_response_seen, session_payload
+
+    @staticmethod
+    def _is_non_empty_session_payload(payload: Optional[Any]) -> bool:
+        return isinstance(payload, dict) and len(payload) > 0

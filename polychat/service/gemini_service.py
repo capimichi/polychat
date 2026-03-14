@@ -5,6 +5,7 @@ from injector import inject
 from polychat.client.gemini_client import GeminiClient
 from polychat.mapper.client.gemini_chat_mapper import GeminiChatMapper
 from polychat.model.service.chat import Chat
+from polychat.service.chat_waiter import ChatWaiter
 
 
 class GeminiService:
@@ -33,3 +34,10 @@ class GeminiService:
             return self.gemini_chat_mapper.create_from(response)
         except Exception as exc:
             raise Exception(f"Error fetching Gemini conversation: {exc}")
+
+    async def ask_and_wait(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> Chat:
+        try:
+            started_chat = await self.ask(message, chat_id, type_input=type_input)
+            return await ChatWaiter.wait_for_completion(started_chat, self.get_conversation)
+        except Exception as exc:
+            raise Exception(f"Error asking Gemini and waiting for completion: {exc}")

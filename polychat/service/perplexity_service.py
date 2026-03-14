@@ -3,6 +3,7 @@ from injector import inject
 from polychat.client.perplexity_client import PerplexityClient
 from polychat.mapper.client.perplexity_chat_mapper import PerplexityChatMapper
 from polychat.model.service.chat import Chat
+from polychat.service.chat_waiter import ChatWaiter
 
 
 class PerplexityService:
@@ -40,3 +41,11 @@ class PerplexityService:
             return self.perplexity_chat_mapper.create_from(response)
         except Exception as e:
             raise Exception(f"Error fetching Perplexity conversation: {str(e)}")
+
+    async def ask_and_wait(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> Chat:
+        """Send a message and wait until the provider exposes the completed response."""
+        try:
+            started_chat = await self.ask(message, chat_id, type_input=type_input)
+            return await ChatWaiter.wait_for_completion(started_chat, self.get_conversation)
+        except Exception as e:
+            raise Exception(f"Error asking Perplexity and waiting for completion: {str(e)}")

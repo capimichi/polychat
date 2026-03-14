@@ -3,7 +3,12 @@ from injector import inject
 
 from polychat.mapper.service.chat_to_api_mapper import ChatToApiMapper
 from polychat.model.chat_request import ChatRequest
-from polychat.model.api.chat_response import ChannelStatusResponse, ChatMessageResponse, ChatStartResponse
+from polychat.model.api.chat_response import (
+    ChannelStatusResponse,
+    ChatCompleteResponse,
+    ChatMessageResponse,
+    ChatStartResponse,
+)
 from polychat.service.kimi_service import KimiService
 
 
@@ -25,6 +30,13 @@ class KimiController:
             methods=["POST"],
             summary="Invia un messaggio a Kimi",
             response_model=ChatStartResponse,
+        )
+        self.router.add_api_route(
+            "/complete",
+            self.create_chat_and_wait,
+            methods=["POST"],
+            summary="Invia un messaggio a Kimi e attende la risposta finale",
+            response_model=ChatCompleteResponse,
         )
         self.router.add_api_route(
             "/logout",
@@ -66,6 +78,16 @@ class KimiController:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error fetching Kimi conversation: {exc}",
+            )
+
+    async def create_chat_and_wait(self, request: ChatRequest) -> ChatCompleteResponse:
+        try:
+            chat = await self.kimi_service.ask_and_wait(request.message, request.chat_id, type_input=request.type)
+            return self.chat_to_api_mapper.create_complete_from(chat)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error processing blocking Kimi request: {exc}",
             )
 
     def logout(self) -> dict:
