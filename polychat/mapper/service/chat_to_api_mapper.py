@@ -1,4 +1,4 @@
-from polychat.model.api.chat_response import ChatMessageResponse, ChatStartResponse
+from polychat.model.api.chat_response import ChatCompleteResponse, ChatMessageResponse, ChatStartResponse
 from polychat.model.service.chat import Chat
 
 
@@ -12,6 +12,13 @@ class ChatToApiMapper:
 
     def create_message_from(self, chat: Chat) -> ChatMessageResponse:
         return ChatMessageResponse(
+            message=chat.message,
+            image_url=chat.image_url,
+        )
+
+    def create_complete_from(self, chat: Chat) -> ChatCompleteResponse:
+        return ChatCompleteResponse(
+            chat_id=chat.id,
             message=chat.message,
             image_url=chat.image_url,
         )
