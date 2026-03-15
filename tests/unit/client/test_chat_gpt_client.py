@@ -204,6 +204,7 @@ class _ConversationFetchPage:
         self._response = response
         self.handlers = {}
         self.waited_timeouts = []
+        self.reload_calls = 0
 
     def on(self, event: str, handler) -> None:
         self.handlers[event] = handler
@@ -223,6 +224,10 @@ class _ConversationFetchPage:
         self.waited_timeouts.append(_timeout)
         return None
 
+    async def reload(self, **_kwargs) -> None:
+        self.reload_calls += 1
+        return None
+
 
 class _ConversationFetchPageWithLateImage(_ConversationFetchPage):
     def __init__(self, response: _FakeResponse, image_response: _FakeResponse):
@@ -240,6 +245,46 @@ class _ConversationFetchPageWithLateImage(_ConversationFetchPage):
             self._emitted_image = True
             await self.handlers["response"](self._image_response)
         return None
+
+
+class _ConversationFetchPageWithReloadedImage(_ConversationFetchPage):
+    def __init__(self, response: _FakeResponse, initial_image_response: _FakeResponse, refreshed_image_response: _FakeResponse):
+        super().__init__(response)
+        self._initial_image_response = initial_image_response
+        self._refreshed_image_response = refreshed_image_response
+        self._grace_wait_count = 0
+
+    async def wait_for_timeout(self, _timeout: int) -> None:
+        self.waited_timeouts.append(_timeout)
+        if _timeout == ChatGptClient.IMAGE_DOWNLOAD_GRACE_PERIOD_MS and "response" in self.handlers:
+            self._grace_wait_count += 1
+            if self._grace_wait_count == 1:
+                await self.handlers["response"](self._initial_image_response)
+            elif self._grace_wait_count == 3:
+                await self.handlers["response"](self._refreshed_image_response)
+        return None
+
+
+class _ConversationFetchPageWithFailingReload(_ConversationFetchPage):
+    def __init__(self, response: _FakeResponse, initial_image_response: _FakeResponse):
+        super().__init__(response)
+        self._initial_image_response = initial_image_response
+        self._grace_wait_count = 0
+
+    async def wait_for_timeout(self, _timeout: int) -> None:
+        self.waited_timeouts.append(_timeout)
+        if (
+            _timeout == ChatGptClient.IMAGE_DOWNLOAD_GRACE_PERIOD_MS
+            and self._grace_wait_count == 0
+            and "response" in self.handlers
+        ):
+            self._grace_wait_count += 1
+            await self.handlers["response"](self._initial_image_response)
+        return None
+
+    async def reload(self, **_kwargs) -> None:
+        self.reload_calls += 1
+        raise TimeoutError("reload timeout")
 
 
 @pytest.mark.asyncio
@@ -435,4 +480,43 @@ async def test_fetch_conversation_via_page_collects_late_image_download_url(tmp_
 
     result = await client._fetch_conversation_via_page(page, "chat-123")
 
+    assert result["image_download_url"] == "https://files.chatgpt.com/file-1.png"
+
+
+@pytest.mark.asyncio
+async def test_fetch_conversation_via_page_refreshes_image_download_url_when_present(tmp_path):
+    client = ChatGptClient(str(tmp_path), session_cookie="cookie")
+    payload = {"conversation_id": "chat-123", "mapping": {}, "current_node": None}
+    response = _FakeResponse("https://chatgpt.com/backend-api/conversation/chat-123", payload)
+    initial_image_response = _FakeResponse(
+        "https://chatgpt.com/backend-api/files/download/file-1?conversation_id=chat-123",
+        {"download_url": "https://files.chatgpt.com/file-1.png"},
+    )
+    refreshed_image_response = _FakeResponse(
+        "https://chatgpt.com/backend-api/files/download/file-2?conversation_id=chat-123",
+        {"download_url": "https://files.chatgpt.com/file-2.png"},
+    )
+    page = _ConversationFetchPageWithReloadedImage(response, initial_image_response, refreshed_image_response)
+
+    result = await client._fetch_conversation_via_page(page, "chat-123")
+
+    assert page.reload_calls == 1
+    assert page.waited_timeouts.count(ChatGptClient.IMAGE_DOWNLOAD_GRACE_PERIOD_MS) == 3
+    assert result["image_download_url"] == "https://files.chatgpt.com/file-2.png"
+
+
+@pytest.mark.asyncio
+async def test_fetch_conversation_via_page_keeps_initial_image_when_reload_times_out(tmp_path):
+    client = ChatGptClient(str(tmp_path), session_cookie="cookie")
+    payload = {"conversation_id": "chat-123", "mapping": {}, "current_node": None}
+    response = _FakeResponse("https://chatgpt.com/backend-api/conversation/chat-123", payload)
+    initial_image_response = _FakeResponse(
+        "https://chatgpt.com/backend-api/files/download/file-1?conversation_id=chat-123",
+        {"download_url": "https://files.chatgpt.com/file-1.png"},
+    )
+    page = _ConversationFetchPageWithFailingReload(response, initial_image_response)
+
+    result = await client._fetch_conversation_via_page(page, "chat-123")
+
+    assert page.reload_calls == 1
     assert result["image_download_url"] == "https://files.chatgpt.com/file-1.png"

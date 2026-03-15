@@ -610,6 +610,28 @@ class ChatGptClient(AbstractClient):
                     break
                 await page.wait_for_timeout(200)
 
+        if image_download_url:
+            initial_image_download_url = image_download_url
+            image_download_url = ""
+            last_image_seen_at = 0.0
+            await page.wait_for_timeout(self.IMAGE_DOWNLOAD_GRACE_PERIOD_MS)
+            try:
+                await page.reload(wait_until="domcontentloaded", timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
+                await page.wait_for_load_state("domcontentloaded", timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
+            except Exception:
+                logger.info("Conversation page reload did not reach domcontentloaded quickly; continuing")
+            await page.wait_for_timeout(self.IMAGE_DOWNLOAD_GRACE_PERIOD_MS)
+
+            if last_image_seen_at > 0:
+                while True:
+                    elapsed = time.monotonic() - last_image_seen_at
+                    if elapsed >= 2.0:
+                        break
+                    await page.wait_for_timeout(200)
+
+            if not image_download_url:
+                image_download_url = initial_image_download_url
+
         if not conversation_payload:
             raise Exception("Risposta conversazione non intercettata")
         if image_download_url:
