@@ -9,6 +9,7 @@ from camoufox.async_api import AsyncCamoufox
 from injector import inject
 
 from polychat.client.abstract_client import AbstractClient
+from polychat.client.auth_payload_parser import AuthPayloadParser
 from polychat.model.client.qwen_response import QwenResponse
 
 
@@ -34,9 +35,26 @@ class QwenClient(AbstractClient):
         super().__init__()
         self.session_dir = os.path.join(session_dir, "qwen")
         self.storage_state_path = os.path.join(self.session_dir, "qwen_state.json")
+        self.cookie_path = os.path.join(self.session_dir, "qwen_cookie.txt")
         self.headless = headless
         self.session_cookie = session_cookie
         os.makedirs(self.session_dir, exist_ok=True)
+
+    async def login(self, content: str) -> None:
+        session_cookie = self._resolve_session_cookie_from_login_content(content)
+        self._write_text_file(self.cookie_path, session_cookie)
+
+        constraints = Screen(max_width=1920, max_height=1080)
+        async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
+            context = await browser.new_context()
+            await context.add_cookies([self._build_session_cookie(session_cookie)])
+            page = await context.new_page()
+            self._attach_page_request_logger(page)
+            await self._goto(page, self.BASE_URL, wait_until="domcontentloaded", timeout=20_000)
+            await page.wait_for_timeout(1_500)
+            await context.storage_state(path=self.storage_state_path)
+            await page.close()
+            await context.close()
 
     async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> QwenResponse:
         session_cookie = self._load_session_cookie()
@@ -54,18 +72,7 @@ class QwenClient(AbstractClient):
                     context_options["storage_state"] = self.storage_state_path
 
                 context = await browser.new_context(**context_options)
-                await context.add_cookies(
-                    [
-                        {
-                            "name": "token",
-                            "value": session_cookie,
-                            "domain": "chat.qwen.ai",
-                            "path": "/",
-                            "secure": True,
-                            "sameSite": "Lax",
-                        }
-                    ]
-                )
+                await context.add_cookies([self._build_session_cookie(session_cookie)])
 
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
@@ -125,18 +132,7 @@ class QwenClient(AbstractClient):
                     context_options["storage_state"] = self.storage_state_path
 
                 context = await browser.new_context(**context_options)
-                await context.add_cookies(
-                    [
-                        {
-                            "name": "token",
-                            "value": session_cookie,
-                            "domain": "chat.qwen.ai",
-                            "path": "/",
-                            "secure": True,
-                            "sameSite": "Lax",
-                        }
-                    ]
-                )
+                await context.add_cookies([self._build_session_cookie(session_cookie)])
 
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
@@ -193,18 +189,7 @@ class QwenClient(AbstractClient):
                 context_options["storage_state"] = self.storage_state_path
 
             context = await browser.new_context(**context_options)
-            await context.add_cookies(
-                [
-                    {
-                        "name": "token",
-                        "value": session_cookie,
-                        "domain": "chat.qwen.ai",
-                        "path": "/",
-                        "secure": True,
-                        "sameSite": "Lax",
-                    }
-                ]
-            )
+            await context.add_cookies([self._build_session_cookie(session_cookie)])
 
             page = await context.new_page()
             self._attach_page_request_logger(page)
@@ -312,9 +297,34 @@ class QwenClient(AbstractClient):
 
     def _load_session_cookie(self) -> str:
         cookie_value = (self.session_cookie or "").strip()
+        if cookie_value:
+            return cookie_value
+        if os.path.exists(self.cookie_path):
+            cookie_value = self._read_text_file(self.cookie_path)
+            if cookie_value:
+                return cookie_value
+        raise ValueError("QWEN_SESSION_COOKIE mancante o vuoto")
+
+    def _resolve_session_cookie_from_login_content(self, content: str) -> str:
+        parsed = AuthPayloadParser.parse(content)
+        for cookie in parsed.cookies:
+            if cookie.get("name") == "token":
+                return str(cookie["value"])
+        cookie_value = parsed.raw_text.strip()
         if not cookie_value:
-            raise ValueError("QWEN_SESSION_COOKIE mancante o vuoto")
+            raise ValueError("Cookie Qwen 'token' mancante")
         return cookie_value
+
+    @staticmethod
+    def _build_session_cookie(session_cookie: str) -> dict:
+        return {
+            "name": "token",
+            "value": session_cookie,
+            "domain": "chat.qwen.ai",
+            "path": "/",
+            "secure": True,
+            "sameSite": "Lax",
+        }
 
     async def _submit_prompt(
         self,

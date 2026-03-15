@@ -6,6 +6,7 @@ from injector import inject
 
 from polychat.mapper.service.chat_to_api_mapper import ChatToApiMapper
 from polychat.model.chat_request import ChatRequest
+from polychat.model.api.login_request import LoginRequest
 from polychat.model.api.chat_response import (
     ChannelStatusResponse,
     ChatCompleteResponse,
@@ -39,6 +40,12 @@ class ChatGptController:
             methods=["POST"],
             summary="Invia un messaggio a ChatGPT e attende la risposta finale",
             response_model=ChatCompleteResponse,
+        )
+        self.router.add_api_route(
+            "/login",
+            self.login,
+            methods=["POST"],
+            summary="Login ChatGPT",
         )
         self.router.add_api_route(
             "/logout",
@@ -126,6 +133,16 @@ class ChatGptController:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error fetching ChatGPT status: {exc}",
+            )
+
+    async def login(self, request: LoginRequest) -> dict:
+        try:
+            await self.chatgpt_service.login(request.content)
+            return {"status": "ok"}
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error processing ChatGPT login: {exc}",
             )
 
     def proxy_download(self, download_url: str = Query(...)) -> StreamingResponse:

@@ -18,6 +18,9 @@ class ChatGptService:
         """Rimuove la sessione ChatGPT salvata."""
         self.chatgpt_client.logout()
 
+    async def login(self, content: str) -> None:
+        await self.chatgpt_client.login(content)
+
     async def status(self) -> dict:
         return await self.chatgpt_client.status()
 

@@ -8,6 +8,7 @@ from camoufox.async_api import AsyncCamoufox
 from injector import inject
 
 from polychat.client.abstract_client import AbstractClient
+from polychat.client.auth_payload_parser import AuthPayloadParser
 from polychat.model.client.kimi_response import KimiResponse
 
 
@@ -28,15 +29,17 @@ class KimiClient(AbstractClient):
         super().__init__()
         self.session_dir = os.path.join(session_dir, "kimi")
         self.storage_state_path = os.path.join(self.session_dir, "kimi_state.json")
+        self.auth_token_path = os.path.join(self.session_dir, "kimi_auth_token.txt")
         self.headless = headless
         self.auth_token = auth_token
         os.makedirs(self.session_dir, exist_ok=True)
 
-    async def login(self) -> None:
+    async def login(self, content: str) -> None:
         """Inietta il cookie di auth Kimi e salva lo stato della sessione."""
         os.makedirs(self.session_dir, exist_ok=True)
         constraints = Screen(max_width=1920, max_height=1080)
-        auth_token = self._load_auth_token()
+        auth_token = self._resolve_auth_token_from_login_content(content)
+        self._write_text_file(self.auth_token_path, auth_token)
         async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
             context = await browser.new_context()
             await context.add_cookies([self._build_auth_cookie(auth_token)])
@@ -239,8 +242,22 @@ class KimiClient(AbstractClient):
 
     def _load_auth_token(self) -> str:
         auth_token = (self.auth_token or "").strip()
+        if auth_token:
+            return auth_token
+        if os.path.exists(self.auth_token_path):
+            auth_token = self._read_text_file(self.auth_token_path)
+            if auth_token:
+                return auth_token
+        raise ValueError("KIMI_AUTH_TOKEN mancante o vuoto")
+
+    def _resolve_auth_token_from_login_content(self, content: str) -> str:
+        parsed = AuthPayloadParser.parse(content)
+        for cookie in parsed.cookies:
+            if cookie.get("name") == "kimi-auth":
+                return str(cookie["value"])
+        auth_token = parsed.raw_text.strip()
         if not auth_token:
-            raise ValueError("KIMI_AUTH_TOKEN mancante o vuoto")
+            raise ValueError("Cookie Kimi 'kimi-auth' mancante")
         return auth_token
 
     @staticmethod

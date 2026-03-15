@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+import json
 import logging
 import os
 import shutil
@@ -141,6 +142,25 @@ class AbstractClient:
     def _clear_session_dir(path: str) -> None:
         if os.path.exists(path):
             shutil.rmtree(path)
+
+    @staticmethod
+    def _write_text_file(path: str, content: str) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as file:
+            file.write(content)
+
+    @staticmethod
+    def _read_text_file(path: str) -> str:
+        with open(path, "r", encoding="utf-8") as file:
+            return file.read().strip()
+
+    @classmethod
+    def _write_json_file(cls, path: str, content: dict) -> None:
+        cls._write_text_file(path, json.dumps(content, ensure_ascii=True))
+
+    @classmethod
+    def _read_json_file(cls, path: str) -> dict:
+        return json.loads(cls._read_text_file(path))
 
     def _fetch_page_content(self, url: str, headers: Optional[dict] = None, timeout: int = 15) -> str:
         with requests.Session() as session:

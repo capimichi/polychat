@@ -3,6 +3,7 @@ from injector import inject
 
 from polychat.model.chat_request import ChatRequest
 from polychat.mapper.service.chat_to_api_mapper import ChatToApiMapper
+from polychat.model.api.login_request import LoginRequest
 from polychat.model.api.chat_response import (
     ChannelStatusResponse,
     ChatCompleteResponse,
@@ -37,6 +38,12 @@ class PerplexityController:
             methods=["POST"],
             summary="Send a message to Perplexity and wait for the completed response",
             response_model=ChatCompleteResponse,
+        )
+        self.router.add_api_route(
+            "/login",
+            self.login,
+            methods=["POST"],
+            summary="Login Perplexity",
         )
         self.router.add_api_route(
             "/logout",
@@ -117,4 +124,14 @@ class PerplexityController:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error fetching Perplexity status: {exc}",
+            )
+
+    async def login(self, request: LoginRequest) -> dict:
+        try:
+            await self.perplexity_service.login(request.content)
+            return {"status": "ok"}
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error processing Perplexity login: {exc}",
             )

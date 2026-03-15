@@ -8,6 +8,9 @@ from polychat.model.service.chat_metadata import ChatMetadata
 
 
 class _FakePerplexityService:
+    def __init__(self):
+        self.login_content = None
+
     async def ask(self, message: str, chat_id: str | None = None, type_input: bool = True) -> Chat:
         return Chat(id="chat-abc", message="", metadata=ChatMetadata(provider="perplexity"))
 
@@ -32,6 +35,9 @@ class _FakePerplexityService:
             "is_logged_in": False,
             "detail": "TODO",
         }
+
+    async def login(self, content: str) -> None:
+        self.login_content = content
 
 
 def create_test_app():
@@ -73,3 +79,13 @@ def test_post_perplexity_chat_complete_returns_full_payload():
         "message": "from fake",
         "image_url": "https://img.test/fake.png",
     }
+
+
+def test_post_perplexity_login_returns_ok():
+    app = create_test_app()
+    client = TestClient(app)
+
+    response = client.post("/perplexity/chats/login", json={"content": "cookie-123"})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}

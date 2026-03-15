@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from polychat.client.qwen_client import QwenClient
 from polychat.model.client.qwen_response import QwenResponse
 
@@ -42,3 +44,20 @@ def test_qwen_response_answer_and_done():
     assert response.answer == "Risposta finale"
     assert response.done is True
     assert response.model_name == "qwen3.5-plus"
+
+
+def test_load_session_cookie_reads_persisted_file(tmp_path):
+    client = QwenClient(str(tmp_path), session_cookie="")
+    Path(client.cookie_path).write_text("persisted-qwen", encoding="utf-8")
+
+    assert client._load_session_cookie() == "persisted-qwen"
+
+
+def test_resolve_session_cookie_from_cookie_export(tmp_path):
+    client = QwenClient(str(tmp_path), session_cookie="")
+
+    cookie = client._resolve_session_cookie_from_login_content(
+        '[{"name":"token","value":"qwen-123","domain":"chat.qwen.ai"}]'
+    )
+
+    assert cookie == "qwen-123"
