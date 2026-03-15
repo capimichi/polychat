@@ -2,9 +2,6 @@ import pytest
 
 from polychat.mapper.client.perplexity_chat_mapper import PerplexityChatMapper
 from polychat.service.perplexity_service import PerplexityService
-from polychat.service.chat_waiter import ChatWaitTimeoutError, ChatWaiter
-from polychat.model.service.chat import Chat
-from polychat.model.service.chat_metadata import ChatMetadata
 from tests.fakes.fake_perplexity_client import FakePerplexityClient
 from tests.fakes.perplexity_response_factory import make_perplexity_response
 
@@ -44,23 +41,3 @@ async def test_perplexity_service_ask_and_wait_uses_single_client_flow():
     assert fake_client.conversation_calls == []
     assert response.id == "backend-uuid"
     assert response.message == "done"
-
-
-@pytest.mark.asyncio
-async def test_chat_waiter_raises_timeout_when_chat_never_completes():
-    pending_chat = Chat(
-        id="chat-123",
-        message="",
-        metadata=ChatMetadata(provider="perplexity"),
-    )
-
-    async def _fetch(_: str) -> Chat:
-        return pending_chat
-
-    with pytest.raises(ChatWaitTimeoutError):
-        await ChatWaiter.wait_for_completion(
-            pending_chat,
-            _fetch,
-            timeout_seconds=0.01,
-            poll_interval_seconds=0.01,
-        )

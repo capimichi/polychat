@@ -13,7 +13,7 @@ class PerplexityClient(AbstractClient):
     SESSION_URL_MARKER = "api/auth/session"
     SESSION_RESPONSE_TIMEOUT_MS = 5_000
     COMPLETE_WAIT_TIMEOUT_SECONDS = 60.0
-    COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 5.0
+    COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 2.0
 
     @inject
     def __init__(

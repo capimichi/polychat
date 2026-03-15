@@ -19,7 +19,7 @@ class GeminiClient(AbstractClient):
     BATCH_EXECUTE_PATH = "/_/BardChatUi/data/batchexecute"
     INPUT_SELECTOR = ".text-input-field"
     COMPLETE_WAIT_TIMEOUT_SECONDS = 60.0
-    COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 5.0
+    COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 2.0
 
     @inject
     def __init__(

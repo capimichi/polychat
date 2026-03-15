@@ -16,7 +16,7 @@ class KimiClient(AbstractClient):
 
     BASE_URL = "https://www.kimi.com/"
     COMPLETE_WAIT_TIMEOUT_SECONDS = 60.0
-    COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 5.0
+    COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 2.0
 
     @inject
     def __init__(self, session_dir: str, headless: bool | Literal["virtual"] = False):
