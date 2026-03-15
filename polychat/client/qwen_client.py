@@ -21,6 +21,8 @@ class QwenClient(AbstractClient):
     INPUT_SELECTOR = ".message-input-textarea"
     POLL_INTERVAL_SECONDS = 2
     MAX_WAIT_SECONDS = 120
+    COMPLETE_WAIT_TIMEOUT_SECONDS = 60.0
+    COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 5.0
 
     @inject
     def __init__(
@@ -172,6 +174,60 @@ class QwenClient(AbstractClient):
 
         return await self._retry_async(_attempt, attempts=3)
 
+    async def ask_and_wait(
+        self,
+        message: str,
+        chat_id: Optional[str] = None,
+        type_input: bool = True,
+    ) -> QwenResponse:
+        session_cookie = self._load_session_cookie()
+        constraints = Screen(max_width=1920, max_height=1080)
+
+        async with AsyncCamoufox(
+            headless=self.headless,
+            humanize=True,
+            screen=constraints,
+        ) as browser:
+            context_options = {}
+            if os.path.exists(self.storage_state_path):
+                context_options["storage_state"] = self.storage_state_path
+
+            context = await browser.new_context(**context_options)
+            await context.add_cookies(
+                [
+                    {
+                        "name": "token",
+                        "value": session_cookie,
+                        "domain": "chat.qwen.ai",
+                        "path": "/",
+                        "secure": True,
+                        "sameSite": "Lax",
+                    }
+                ]
+            )
+
+            page = await context.new_page()
+            self._attach_page_request_logger(page)
+
+            try:
+                resolved_chat_id = await self._submit_prompt(page, message, chat_id, type_input)
+                await self._wait_for_network_to_settle(
+                    page,
+                    timeout_seconds=self.COMPLETE_WAIT_TIMEOUT_SECONDS,
+                    check_interval_seconds=self.COMPLETE_WAIT_CHECK_INTERVAL_SECONDS,
+                )
+                response = await self._poll_chat_response_from_page(page, resolved_chat_id)
+            finally:
+                try:
+                    await context.storage_state(path=self.storage_state_path)
+                except Exception:
+                    pass
+
+                await page.close()
+                await context.close()
+
+        return response
+
     async def _poll_chat_response(self, chat_id: str, session_cookie: str) -> QwenResponse:
         elapsed = 0
         last_response: Optional[QwenResponse] = None
@@ -180,6 +236,40 @@ class QwenClient(AbstractClient):
         while elapsed < self.MAX_WAIT_SECONDS:
             try:
                 payload = await asyncio.to_thread(self._fetch_chat_payload, chat_id, session_cookie)
+                response = QwenResponse.model_validate(payload)
+                last_response = response
+
+                if response.done and response.answer.strip():
+                    return response
+            except Exception as exc:
+                last_error = exc
+
+            await asyncio.sleep(self.POLL_INTERVAL_SECONDS)
+            elapsed += self.POLL_INTERVAL_SECONDS
+
+        if last_response and last_response.answer.strip():
+            return last_response
+
+        if last_error:
+            raise TimeoutError(
+                f"Timeout waiting for Qwen chat response (chat_id={chat_id}). Last error: {last_error}"
+            )
+        raise TimeoutError(f"Timeout waiting for Qwen chat response (chat_id={chat_id})")
+
+    async def _poll_chat_response_from_page(self, page, chat_id: str) -> QwenResponse:  # noqa: ANN001
+        elapsed = 0
+        last_response: Optional[QwenResponse] = None
+        last_error: Optional[Exception] = None
+
+        while elapsed < self.MAX_WAIT_SECONDS:
+            try:
+                payload = await page.evaluate(
+                    """async (url) => {
+                        const response = await fetch(url, { credentials: 'include' });
+                        return await response.json();
+                    }""",
+                    self.CHAT_API_URL.format(chat_id=chat_id),
+                )
                 response = QwenResponse.model_validate(payload)
                 last_response = response
 
@@ -225,6 +315,35 @@ class QwenClient(AbstractClient):
         if not cookie_value:
             raise ValueError("QWEN_SESSION_COOKIE mancante o vuoto")
         return cookie_value
+
+    async def _submit_prompt(
+        self,
+        page,
+        message: str,
+        chat_id: Optional[str],
+        type_input: bool,
+    ) -> str:
+        requested_chat_id = chat_id
+        url = f"{self.BASE_URL}c/{requested_chat_id}" if requested_chat_id else self.BASE_URL
+        await self._goto(page, url, wait_until="domcontentloaded", timeout=15_000)
+        await page.wait_for_selector(self.INPUT_SELECTOR, state="visible", timeout=20_000)
+        await page.wait_for_timeout(500)
+
+        if type_input:
+            await self._type_into_focused_input(page, message)
+        else:
+            await self._paste_into_focused_input(page, message)
+
+        await page.keyboard.press("Enter")
+
+        await page.wait_for_timeout(1_000)
+
+        current_url = page.url or ""
+        extracted_chat_id = self._extract_chat_id_from_url(current_url)
+        if not extracted_chat_id:
+            raise ValueError("Chat ID Qwen non trovato nella URL dopo l'invio del messaggio")
+
+        return extracted_chat_id
 
     async def _type_into_focused_input(self, page, content: str) -> None:
         safe_content = self._sanitize_message(content)

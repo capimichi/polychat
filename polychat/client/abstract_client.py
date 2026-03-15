@@ -37,6 +37,51 @@ class AbstractClient:
         self._log_http_request("GET", url)
         return await page.goto(url, **kwargs)
 
+    async def _wait_for_network_to_settle(
+        self,
+        page,
+        timeout_seconds: float,
+        check_interval_seconds: float,
+        resource_types: Optional[set[str]] = None,
+    ) -> None:  # noqa: ANN001
+        tracked_resource_types = resource_types or {"fetch", "xhr"}
+        pending_requests = 0
+        activity_event = asyncio.Event()
+
+        def handle_request(request):  # noqa: ANN001
+            nonlocal pending_requests
+            resource_type = getattr(request, "resource_type", "")
+            if resource_type in tracked_resource_types:
+                pending_requests += 1
+                activity_event.set()
+
+        def handle_request_finished(request):  # noqa: ANN001
+            nonlocal pending_requests
+            resource_type = getattr(request, "resource_type", "")
+            if resource_type in tracked_resource_types:
+                pending_requests = max(0, pending_requests - 1)
+
+        page.on("request", handle_request)
+        page.on("requestfinished", handle_request_finished)
+        page.on("requestfailed", handle_request_finished)
+
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+
+        while True:
+            remaining_seconds = deadline - asyncio.get_running_loop().time()
+            if remaining_seconds <= 0:
+                return
+
+            activity_event.clear()
+            try:
+                await asyncio.wait_for(
+                    activity_event.wait(),
+                    timeout=min(check_interval_seconds, remaining_seconds),
+                )
+            except asyncio.TimeoutError:
+                if pending_requests == 0:
+                    return
+
     def _requests_request(self, session, method: str, url: str, **kwargs):  # noqa: ANN001
         self._log_http_request(method, url)
         return session.request(method=method.upper(), url=url, **kwargs)

@@ -18,6 +18,8 @@ class GeminiClient(AbstractClient):
     BASE_URL = "https://gemini.google.com/app"
     BATCH_EXECUTE_PATH = "/_/BardChatUi/data/batchexecute"
     INPUT_SELECTOR = ".text-input-field"
+    COMPLETE_WAIT_TIMEOUT_SECONDS = 60.0
+    COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 5.0
 
     @inject
     def __init__(
@@ -180,6 +182,127 @@ class GeminiClient(AbstractClient):
             await context.close()
 
         return GeminiResponse(chat_id=chat_id, message=(content or "").strip())
+
+    async def _submit_prompt(
+        self,
+        page,
+        message: str,
+        chat_id: Optional[str],
+        type_input: bool,
+    ) -> str:
+        url = f"{self.BASE_URL}/{chat_id}" if chat_id else self.BASE_URL
+        await self._goto(page, url, wait_until="domcontentloaded", timeout=20_000)
+
+        await page.wait_for_selector(self.INPUT_SELECTOR, state="visible", timeout=20_000)
+        await page.click(self.INPUT_SELECTOR)
+        await page.wait_for_timeout(1_000)
+
+        if type_input:
+            await page.keyboard.type(self._sanitize_message(message))
+        else:
+            await page.keyboard.insert_text(self._sanitize_message(message))
+
+        await page.keyboard.press("Enter")
+        await page.wait_for_timeout(2_000)
+
+        try:
+            await page.wait_for_url("**/app/**", timeout=15_000)
+        except Exception:
+            pass
+
+        extracted_chat_id = self._extract_chat_id_from_url(page.url or "")
+        if not extracted_chat_id:
+            raise ValueError("Chat ID Gemini non trovato nella URL dopo l'invio del messaggio")
+
+        return extracted_chat_id
+
+    async def _read_conversation_from_page(self, page, chat_id: str) -> str:  # noqa: ANN001
+        response_container_id = ""
+        response_received = asyncio.Event()
+
+        async def handle_response(response):
+            nonlocal response_container_id
+            if self.BATCH_EXECUTE_PATH not in (response.url or ""):
+                return
+
+            try:
+                content = await response.text()
+            except Exception:
+                return
+
+            extracted = self._extract_response_container_id(content, chat_id)
+            if extracted:
+                response_container_id = extracted
+                response_received.set()
+
+        page.on("response", handle_response)
+        await self._goto(page, f"{self.BASE_URL}/{chat_id}", wait_until="domcontentloaded", timeout=20_000)
+
+        try:
+            await asyncio.wait_for(response_received.wait(), timeout=45)
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError("Timeout waiting for Gemini batchexecute response") from exc
+
+        selector = f"#model-response-message-content{response_container_id}"
+        await page.wait_for_selector(selector, state="visible", timeout=45_000)
+        return await page.inner_text(selector)
+
+    async def ask_and_wait(
+        self,
+        message: str,
+        chat_id: Optional[str] = None,
+        type_input: bool = True,
+    ) -> GeminiResponse:
+        cookie_1psid, cookie_1psidts = self._load_session_cookies()
+        constraints = Screen(max_width=1920, max_height=1080)
+
+        async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
+            context_options = {}
+            if os.path.exists(self.storage_state_path):
+                context_options["storage_state"] = self.storage_state_path
+
+            context = await browser.new_context(**context_options)
+            await context.add_cookies([
+                {
+                    "name": "__Secure-1PSID",
+                    "value": cookie_1psid,
+                    "domain": ".google.com",
+                    "path": "/",
+                    "httpOnly": True,
+                    "secure": True,
+                    "sameSite": "None",
+                },
+                {
+                    "name": "__Secure-1PSIDTS",
+                    "value": cookie_1psidts,
+                    "domain": ".google.com",
+                    "path": "/",
+                    "httpOnly": True,
+                    "secure": True,
+                    "sameSite": "None",
+                },
+            ])
+
+            page = await context.new_page()
+            self._attach_page_request_logger(page)
+
+            try:
+                resolved_chat_id = await self._submit_prompt(page, message, chat_id, type_input)
+                await self._wait_for_network_to_settle(
+                    page,
+                    timeout_seconds=self.COMPLETE_WAIT_TIMEOUT_SECONDS,
+                    check_interval_seconds=self.COMPLETE_WAIT_CHECK_INTERVAL_SECONDS,
+                )
+                content = await self._read_conversation_from_page(page, resolved_chat_id)
+            finally:
+                try:
+                    await context.storage_state(path=self.storage_state_path)
+                except Exception:
+                    pass
+                await page.close()
+                await context.close()
+
+        return GeminiResponse(chat_id=resolved_chat_id, message=(content or "").strip())
 
     def logout(self) -> None:
         self._clear_session_dir(self.session_dir)

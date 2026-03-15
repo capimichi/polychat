@@ -307,49 +307,6 @@ class PerplexityClient(AbstractClient):
 
         return current_slug
 
-    async def _wait_for_network_to_settle(
-        self,
-        page,
-        timeout_seconds: float,
-        check_interval_seconds: float,
-    ) -> None:
-        pending_requests = 0
-        activity_event = asyncio.Event()
-
-        def handle_request(request):  # noqa: ANN001
-            nonlocal pending_requests
-            resource_type = getattr(request, "resource_type", "")
-            if resource_type in {"fetch", "xhr"}:
-                pending_requests += 1
-                activity_event.set()
-
-        def handle_request_finished(request):  # noqa: ANN001
-            nonlocal pending_requests
-            resource_type = getattr(request, "resource_type", "")
-            if resource_type in {"fetch", "xhr"}:
-                pending_requests = max(0, pending_requests - 1)
-
-        page.on("request", handle_request)
-        page.on("requestfinished", handle_request_finished)
-        page.on("requestfailed", handle_request_finished)
-
-        deadline = asyncio.get_running_loop().time() + timeout_seconds
-
-        while True:
-            remaining_seconds = deadline - asyncio.get_running_loop().time()
-            if remaining_seconds <= 0:
-                return
-
-            activity_event.clear()
-            try:
-                await asyncio.wait_for(
-                    activity_event.wait(),
-                    timeout=min(check_interval_seconds, remaining_seconds),
-                )
-            except asyncio.TimeoutError:
-                if pending_requests == 0:
-                    return
-
     async def _wait_for_thread_response(self, page, slug: str, post_navigation_wait_ms: int = 0) -> PerplexityResponse:
         """
         Attende la response AJAX /rest/thread/{slug} e valida l'ultima entry.
