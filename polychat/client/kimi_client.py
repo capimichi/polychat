@@ -19,24 +19,32 @@ class KimiClient(AbstractClient):
     COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 2.0
 
     @inject
-    def __init__(self, session_dir: str, headless: bool | Literal["virtual"] = False):
+    def __init__(
+        self,
+        session_dir: str,
+        headless: bool | Literal["virtual"] = False,
+        auth_token: str = "",
+    ):
         super().__init__()
         self.session_dir = os.path.join(session_dir, "kimi")
         self.storage_state_path = os.path.join(self.session_dir, "kimi_state.json")
         self.headless = headless
+        self.auth_token = auth_token
         os.makedirs(self.session_dir, exist_ok=True)
 
     async def login(self) -> None:
-        """Apre il browser per consentire il login manuale e salva lo stato della sessione."""
+        """Inietta il cookie di auth Kimi e salva lo stato della sessione."""
         os.makedirs(self.session_dir, exist_ok=True)
         constraints = Screen(max_width=1920, max_height=1080)
+        auth_token = self._load_auth_token()
         async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
             context = await browser.new_context()
+            await context.add_cookies([self._build_auth_cookie(auth_token)])
             page = await context.new_page()
             self._attach_page_request_logger(page)
 
             await self._goto(page, self.BASE_URL)
-            await asyncio.sleep(60)
+            await asyncio.sleep(2)
 
             await context.storage_state(path=self.storage_state_path)
 
@@ -54,11 +62,13 @@ class KimiClient(AbstractClient):
                 humanize=True,
                 screen=constraints
             ) as browser:
+                auth_token = self._load_auth_token()
                 context_options = {}
                 if os.path.exists(self.storage_state_path):
                     context_options["storage_state"] = self.storage_state_path
 
                 context = await browser.new_context(**context_options)
+                await context.add_cookies([self._build_auth_cookie(auth_token)])
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
 
@@ -100,11 +110,13 @@ class KimiClient(AbstractClient):
                 humanize=True,
                 screen=constraints
             ) as browser:
+                auth_token = self._load_auth_token()
                 context_options = {}
                 if os.path.exists(self.storage_state_path):
                     context_options["storage_state"] = self.storage_state_path
 
                 context = await browser.new_context(**context_options)
+                await context.add_cookies([self._build_auth_cookie(auth_token)])
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
                 await self._goto(page, f"{self.BASE_URL}chat/{chat_id}")
@@ -157,11 +169,13 @@ class KimiClient(AbstractClient):
                 humanize=True,
                 screen=constraints
             ) as browser:
+                auth_token = self._load_auth_token()
                 context_options = {}
                 if os.path.exists(self.storage_state_path):
                     context_options["storage_state"] = self.storage_state_path
 
                 context = await browser.new_context(**context_options)
+                await context.add_cookies([self._build_auth_cookie(auth_token)])
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
 
@@ -192,10 +206,12 @@ class KimiClient(AbstractClient):
                 humanize=True,
                 screen=constraints
             ) as browser:
+                auth_token = self._load_auth_token()
                 context_options = {}
                 if os.path.exists(self.storage_state_path):
                     context_options["storage_state"] = self.storage_state_path
                 context = await browser.new_context(**context_options)
+                await context.add_cookies([self._build_auth_cookie(auth_token)])
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
                 await self._goto(page, self.BASE_URL, wait_until="domcontentloaded", timeout=20_000)
@@ -219,6 +235,24 @@ class KimiClient(AbstractClient):
             "is_available": True,
             "is_logged_in": False,
             "detail": "TODO: implement Kimi login detection",
+        }
+
+    def _load_auth_token(self) -> str:
+        auth_token = (self.auth_token or "").strip()
+        if not auth_token:
+            raise ValueError("KIMI_AUTH_TOKEN mancante o vuoto")
+        return auth_token
+
+    @staticmethod
+    def _build_auth_cookie(auth_token: str) -> dict:
+        return {
+            "name": "kimi-auth",
+            "value": auth_token,
+            "domain": ".kimi.com",
+            "path": "/",
+            "httpOnly": True,
+            "secure": True,
+            "sameSite": "Lax",
         }
 
     @staticmethod

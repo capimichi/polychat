@@ -11,14 +11,12 @@ from polychat.service.kimi_service import KimiService
 )
 def login_kimi_command():
     """
-    Login to Kimi by opening a browser and waiting 60 seconds for manual login.
-    The session will be saved for future requests.
+    Login to Kimi using KIMI_AUTH_TOKEN and save the browser session.
     """
     default_container: DefaultContainer = DefaultContainer.getInstance()
     kimi_service: KimiService = default_container.get(KimiService)
 
-    click.echo("Opening browser for Kimi login...")
-    click.echo("Please login manually. You have 60 seconds.")
+    click.echo("Saving Kimi session from KIMI_AUTH_TOKEN...")
 
     try:
         asyncio.run(kimi_service.login())
