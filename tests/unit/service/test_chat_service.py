@@ -31,7 +31,7 @@ async def test_perplexity_service_login_sets_flag():
 
 
 @pytest.mark.asyncio
-async def test_perplexity_service_ask_and_wait_polls_until_message_available():
+async def test_perplexity_service_ask_and_wait_uses_single_client_flow():
     fake_client = FakePerplexityClient(
         response=make_perplexity_response(answer=""),
         conversation_response=make_perplexity_response(answer="done"),
@@ -40,8 +40,8 @@ async def test_perplexity_service_ask_and_wait_polls_until_message_available():
 
     response = await service.ask_and_wait("hello", chat_id="chat-123")
 
-    assert fake_client.calls == [("hello", "chat-123", True)]
-    assert fake_client.conversation_calls == ["backend-uuid"]
+    assert fake_client.calls == [("hello", "chat-123", True, "complete")]
+    assert fake_client.conversation_calls == []
     assert response.id == "backend-uuid"
     assert response.message == "done"
 

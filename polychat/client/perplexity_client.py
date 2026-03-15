@@ -12,6 +12,8 @@ from polychat.model.client.perplexity_response import PerplexityResponse
 class PerplexityClient(AbstractClient):
     SESSION_URL_MARKER = "api/auth/session"
     SESSION_RESPONSE_TIMEOUT_MS = 5_000
+    COMPLETE_WAIT_TIMEOUT_SECONDS = 60.0
+    COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 5.0
 
     @inject
     def __init__(
@@ -111,6 +113,57 @@ class PerplexityClient(AbstractClient):
                 return response_content
 
         return await _attempt()
+
+    async def ask_and_wait(
+        self,
+        message: str,
+        chat_id: Optional[str] = None,
+        type_input: bool = True,
+    ) -> PerplexityResponse:
+        constraints = Screen(max_width=1920, max_height=1080)
+        session_cookie = self._load_session_cookie()
+
+        async with AsyncCamoufox(
+            headless=self.headless,
+            humanize=True,
+            screen=constraints,
+        ) as browser:
+            context_options = {}
+            if os.path.exists(self.storage_state_path):
+                context_options["storage_state"] = self.storage_state_path
+
+            context = await browser.new_context(**context_options)
+            await context.add_cookies([
+                {
+                    "name": "__Secure-next-auth.session-token",
+                    "value": session_cookie,
+                    "domain": ".perplexity.ai",
+                    "path": "/",
+                    "httpOnly": True,
+                    "secure": True,
+                    "sameSite": "None",
+                }
+            ])
+            page = await context.new_page()
+            self._attach_page_request_logger(page)
+
+            try:
+                slug = await self._submit_prompt(page, message, chat_id, type_input)
+                await self._wait_for_network_to_settle(
+                    page,
+                    timeout_seconds=self.COMPLETE_WAIT_TIMEOUT_SECONDS,
+                    check_interval_seconds=self.COMPLETE_WAIT_CHECK_INTERVAL_SECONDS,
+                )
+                response_content = await self._wait_for_thread_response(page, slug)
+            finally:
+                try:
+                    await context.storage_state(path=self.storage_state_path)
+                except Exception:
+                    pass
+                await page.close()
+                await context.close()
+
+        return response_content
 
     def logout(self) -> None:
         self._clear_session_dir(self.session_dir)
@@ -224,6 +277,35 @@ class PerplexityClient(AbstractClient):
             await context.close()
 
         return response_content
+
+    async def _submit_prompt(
+        self,
+        page,
+        message: str,
+        chat_id: Optional[str],
+        type_input: bool,
+    ) -> str:
+        if chat_id:
+            url = f"https://www.perplexity.ai/search/{chat_id}"
+        else:
+            url = "https://www.perplexity.ai/"
+
+        await self._goto(page, url)
+
+        if type_input:
+            await self._type_message(page, "#ask-input", message)
+        else:
+            await self._paste_message(page, "#ask-input", message)
+
+        await page.wait_for_timeout(1000)
+        await page.click("button.interactable.rounded-full.bg-button-bg")
+        await page.wait_for_timeout(3_000)
+        current_slug = self._extract_slug_from_url(page.url or "")
+
+        if not current_slug:
+            raise Exception("Slug Perplexity non trovato dopo invio messaggio")
+
+        return current_slug
 
     async def _wait_for_thread_response(self, page, slug: str, post_navigation_wait_ms: int = 0) -> PerplexityResponse:
         """

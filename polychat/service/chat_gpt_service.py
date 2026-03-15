@@ -5,7 +5,6 @@ from injector import inject
 from polychat.client.chat_gpt_client import ChatGptClient
 from polychat.mapper.client.chatgpt_chat_mapper import ChatGptChatMapper
 from polychat.model.service.chat import Chat
-from polychat.service.chat_waiter import ChatWaiter
 
 
 class ChatGptService:
@@ -41,8 +40,8 @@ class ChatGptService:
     async def ask_and_wait(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> Chat:
         """Invia una domanda e attende che la conversazione esponga la risposta finale."""
         try:
-            started_chat = await self.ask(message, chat_id, type_input=type_input)
-            return await ChatWaiter.wait_for_completion(started_chat, self.get_conversation)
+            detail = await self.chatgpt_client.ask_and_wait(message, chat_id, type_input=type_input)
+            return self.chatgpt_chat_mapper.create_from(detail)
         except Exception as exc:
             raise Exception(f"Error asking ChatGPT and waiting for completion: {exc}")
 

@@ -32,6 +32,8 @@ class ChatGptClient(AbstractClient):
     PROMPT_SHORTCUT_WAIT_MS = 1_000
     WAIT_FOR_URL_TIMEOUT_MS = 8_000
     POST_SUBMIT_WAIT_MS = 5_000
+    COMPLETE_WAIT_TIMEOUT_SECONDS = 60.0
+    COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 5.0
 
     @inject
     def __init__(
@@ -248,6 +250,56 @@ class ChatGptClient(AbstractClient):
 
         return await _attempt()
 
+    async def ask_and_wait(
+        self,
+        message: str,
+        chat_id: Optional[str] = None,
+        type_input: bool = True,
+    ) -> ConversationDetail:
+        session_cookie = self._load_session_cookie()
+        constraints = Screen(max_width=1920, max_height=1080)
+
+        logger.info("ChatGPT ask_and_wait started (chat_id=%s, workspace=%s)", chat_id, self.workspace_name or "<none>")
+        async with AsyncCamoufox(
+            headless=self.headless,
+            humanize=True,
+            screen=constraints
+        ) as browser:
+            context_options = {}
+            if os.path.exists(self.storage_state_path):
+                context_options["storage_state"] = self.storage_state_path
+            context = await browser.new_context(**context_options)
+            await context.add_cookies([
+                {
+                    "name": "__Secure-next-auth.session-token",
+                    "value": session_cookie,
+                    "domain": "chatgpt.com",
+                    "path": "/",
+                    "httpOnly": True,
+                    "secure": True,
+                    "sameSite": "None",
+                }
+            ])
+            page = await context.new_page()
+            self._attach_page_request_logger(page)
+
+            try:
+                resolved_chat_id = await self._submit_prompt(page, message, chat_id, type_input)
+                await self._wait_for_network_to_settle(
+                    page,
+                    timeout_seconds=self.COMPLETE_WAIT_TIMEOUT_SECONDS,
+                    check_interval_seconds=self.COMPLETE_WAIT_CHECK_INTERVAL_SECONDS,
+                )
+                payload = await self._fetch_conversation_via_page(page, resolved_chat_id)
+                return ConversationDetail.model_validate(payload)
+            finally:
+                try:
+                    await context.storage_state(path=self.storage_state_path)
+                except Exception as exc:
+                    logger.warning("Unable to persist ChatGPT storage state: %s", exc)
+                await page.close()
+                await context.close()
+
     def _load_session_cookie(self) -> str:
         """Carica il cookie di sessione da variabile ambiente."""
         cookie_value = (self.session_cookie or "").strip()
@@ -405,8 +457,112 @@ class ChatGptClient(AbstractClient):
         return True
 
     async def _fetch_conversation_via_browser(self, chat_id: str, session_cookie: str) -> dict:
-        conversation_url = f"https://chatgpt.com/backend-api/conversation/{chat_id}"
         constraints = Screen(max_width=1920, max_height=1080)
+
+        async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
+            context_options = {}
+            if os.path.exists(self.storage_state_path):
+                context_options["storage_state"] = self.storage_state_path
+            context = await browser.new_context(**context_options)
+            await context.add_cookies([
+                {
+                    "name": "__Secure-next-auth.session-token",
+                    "value": session_cookie,
+                    "domain": "chatgpt.com",
+                    "path": "/",
+                    "httpOnly": True,
+                    "secure": True,
+                    "sameSite": "None",
+                }
+            ])
+            page = await context.new_page()
+            self._attach_page_request_logger(page)
+            conversation_payload = await self._fetch_conversation_via_page(page, chat_id)
+
+            try:
+                await context.storage_state(path=self.storage_state_path)
+            except Exception as exc:
+                logger.warning("Unable to persist ChatGPT storage state: %s", exc)
+            await page.close()
+            await context.close()
+
+        return conversation_payload
+
+    async def _submit_prompt(
+        self,
+        page,
+        message: str,
+        chat_id: Optional[str],
+        type_input: bool,
+    ) -> str:
+        url = f"https://chatgpt.com/c/{chat_id}" if chat_id else "https://chatgpt.com/"
+        logger.info("Opening ChatGPT page: %s", url)
+        await self._goto(page, url, wait_until="domcontentloaded", timeout=12_000)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=4_000)
+        except Exception:
+            logger.info("Network idle not reached quickly; continuing anyway")
+        await page.wait_for_timeout(self.POST_NAVIGATION_WAIT_MS)
+        await self._ensure_workspace_active(page)
+
+        if self.workspace_name:
+            logger.info("Workspace configured; selecting workspace by name: %s", self.workspace_name)
+            await self._select_workspace_by_name(page, self.workspace_name)
+            await page.wait_for_timeout(self.POST_RECOVERY_WAIT_MS)
+
+        await self._focus_prompt_input(page)
+
+        if type_input:
+            logger.info("Typing prompt content in textarea")
+            try:
+                await self._type_into_focused_input(page, message)
+            except Exception:
+                await self._ensure_workspace_active(page)
+                await self._focus_prompt_input(page)
+                try:
+                    await self._type_into_focused_input(page, message)
+                except Exception as retry_exc:
+                    screenshot_path = await self._capture_debug_screenshot(page, "input-interaction")
+                    raise RuntimeError(
+                        f"Errore durante interazione con input '{self.PROMPT_SELECTOR}'. "
+                        f"Screenshot creato: {screenshot_path}."
+                    ) from retry_exc
+        else:
+            logger.info("Pasting prompt content in textarea")
+            try:
+                await self._paste_into_focused_input(page, message)
+            except Exception:
+                await self._ensure_workspace_active(page)
+                await self._focus_prompt_input(page)
+                try:
+                    await self._paste_into_focused_input(page, message)
+                except Exception as retry_exc:
+                    screenshot_path = await self._capture_debug_screenshot(page, "input-interaction")
+                    raise RuntimeError(
+                        f"Errore durante interazione con input '{self.PROMPT_SELECTOR}'. "
+                        f"Screenshot creato: {screenshot_path}."
+                    ) from retry_exc
+
+        await page.keyboard.press("Enter")
+        logger.info("Prompt submitted; waiting for conversation URL")
+
+        try:
+            await page.wait_for_url("**/c/**", timeout=self.WAIT_FOR_URL_TIMEOUT_MS)
+        except Exception:
+            logger.info("Conversation URL not detected within timeout; continuing")
+
+        logger.info("Waiting %sms before continuing after submit", self.POST_SUBMIT_WAIT_MS)
+        await page.wait_for_timeout(self.POST_SUBMIT_WAIT_MS)
+
+        current_url = page.url or ""
+        logger.info("Current page URL after submit: %s", current_url)
+
+        slug = self._extract_slug_from_url(current_url if current_url else url)
+        logger.info("ChatGPT submit completed (chat_id=%s)", slug)
+        return slug
+
+    async def _fetch_conversation_via_page(self, page, chat_id: str) -> dict:  # noqa: ANN001
+        conversation_url = f"https://chatgpt.com/backend-api/conversation/{chat_id}"
         conversation_payload = {}
         image_download_url = ""
         response_received = asyncio.Event()
@@ -428,50 +584,25 @@ class ChatGptClient(AbstractClient):
             except Exception as exc:
                 logger.warning("Error parsing ChatGPT response payload: %s", exc)
 
-        async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
-            context_options = {}
-            if os.path.exists(self.storage_state_path):
-                context_options["storage_state"] = self.storage_state_path
-            context = await browser.new_context(**context_options)
-            await context.add_cookies([
-                {
-                    "name": "__Secure-next-auth.session-token",
-                    "value": session_cookie,
-                    "domain": "chatgpt.com",
-                    "path": "/",
-                    "httpOnly": True,
-                    "secure": True,
-                    "sameSite": "None",
-                }
-            ])
-            page = await context.new_page()
-            self._attach_page_request_logger(page)
-            page.on("response", handle_response)
+        page.on("response", handle_response)
 
-            url = f"https://chatgpt.com/c/{chat_id}"
-            await self._goto(page, url)
-            await page.wait_for_load_state("networkidle")
-            wait_timeout_ms = 30_000
-            poll_interval_ms = 1_000
-            elapsed_ms = 0
+        url = f"https://chatgpt.com/c/{chat_id}"
+        await self._goto(page, url)
+        await page.wait_for_load_state("networkidle")
+        wait_timeout_ms = 30_000
+        poll_interval_ms = 1_000
+        elapsed_ms = 0
 
-            while not response_received.is_set() and elapsed_ms < wait_timeout_ms:
-                await page.wait_for_timeout(poll_interval_ms)
-                elapsed_ms += poll_interval_ms
+        while not response_received.is_set() and elapsed_ms < wait_timeout_ms:
+            await page.wait_for_timeout(poll_interval_ms)
+            elapsed_ms += poll_interval_ms
 
-            if response_received.is_set() and last_image_seen_at > 0:
-                while True:
-                    elapsed = time.monotonic() - last_image_seen_at
-                    if elapsed >= 2.0:
-                        break
-                    await page.wait_for_timeout(200)
-
-            try:
-                await context.storage_state(path=self.storage_state_path)
-            except Exception as exc:
-                logger.warning("Unable to persist ChatGPT storage state: %s", exc)
-            await page.close()
-            await context.close()
+        if response_received.is_set() and last_image_seen_at > 0:
+            while True:
+                elapsed = time.monotonic() - last_image_seen_at
+                if elapsed >= 2.0:
+                    break
+                await page.wait_for_timeout(200)
 
         if not conversation_payload:
             raise Exception("Risposta conversazione non intercettata")

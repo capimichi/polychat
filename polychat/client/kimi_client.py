@@ -15,6 +15,8 @@ class KimiClient(AbstractClient):
     """Client per interagire con Kimi tramite automazione browser."""
 
     BASE_URL = "https://www.kimi.com/"
+    COMPLETE_WAIT_TIMEOUT_SECONDS = 60.0
+    COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 5.0
 
     @inject
     def __init__(self, session_dir: str, headless: bool | Literal["virtual"] = False):
@@ -141,6 +143,44 @@ class KimiClient(AbstractClient):
 
         return await self._retry_async(_attempt, attempts=3)
 
+    async def ask_and_wait(
+        self,
+        message: str,
+        chat_id: Optional[str] = None,
+        type_input: bool = True,
+    ) -> KimiResponse:
+        async def _attempt() -> KimiResponse:
+            constraints = Screen(max_width=1920, max_height=1080)
+
+            async with AsyncCamoufox(
+                headless=self.headless,
+                humanize=True,
+                screen=constraints
+            ) as browser:
+                context_options = {}
+                if os.path.exists(self.storage_state_path):
+                    context_options["storage_state"] = self.storage_state_path
+
+                context = await browser.new_context(**context_options)
+                page = await context.new_page()
+                self._attach_page_request_logger(page)
+
+                try:
+                    resolved_chat_id = await self._submit_prompt(page, message, chat_id, type_input)
+                    await self._wait_for_network_to_settle(
+                        page,
+                        timeout_seconds=self.COMPLETE_WAIT_TIMEOUT_SECONDS,
+                        check_interval_seconds=self.COMPLETE_WAIT_CHECK_INTERVAL_SECONDS,
+                    )
+                    content = await self._read_last_message_html(page)
+                finally:
+                    await page.close()
+                    await context.close()
+
+                return KimiResponse(chat_id=resolved_chat_id, message=content)
+
+        return await self._retry_async(_attempt, attempts=3)
+
     def logout(self) -> None:
         self._clear_session_dir(self.session_dir)
 
@@ -195,3 +235,58 @@ class KimiClient(AbstractClient):
         if len(parts) >= 2 and parts[0] == "chat":
             return parts[1]
         return ""
+
+    async def _submit_prompt(
+        self,
+        page,
+        message: str,
+        chat_id: Optional[str],
+        type_input: bool,
+    ) -> str:
+        url = f"{self.BASE_URL}chat/{chat_id}" if chat_id else self.BASE_URL
+        await self._goto(page, url)
+        if type_input:
+            await self._type_message(page, ".chat-input", message)
+        else:
+            await self._paste_message(page, ".chat-input", message)
+
+        await page.keyboard.press("Enter")
+
+        try:
+            await page.wait_for_url("**/chat/**", timeout=12_000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(1_000)
+        resolved_chat_id = self._extract_chat_id_from_url(page.url or "")
+        if not resolved_chat_id:
+            raise ValueError("Chat ID Kimi non trovato nella URL dopo l'invio del messaggio")
+        return resolved_chat_id
+
+    async def _read_last_message_html(self, page) -> str:  # noqa: ANN001
+        content_html = ""
+        last_len = 0
+        elapsed = 0
+        max_wait_seconds = 120
+
+        while elapsed < max_wait_seconds:
+            await asyncio.sleep(2)
+            elapsed += 2
+
+            messages = await page.query_selector_all(".chat-content-item-assistant .markdown")
+            if not messages:
+                continue
+
+            last_message = messages[-1]
+            html = await last_message.inner_html()
+            if html is None:
+                continue
+
+            current_len = len(html)
+            if current_len > last_len:
+                last_len = current_len
+                content_html = html
+                continue
+
+            break
+
+        return content_html

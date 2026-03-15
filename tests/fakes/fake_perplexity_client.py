@@ -23,6 +23,10 @@ class FakePerplexityClient:
         self.calls.append((message, chat_id, type_input))
         return self.response
 
+    async def ask_and_wait(self, message: str, chat_id: str | None = None, type_input: bool = True) -> PerplexityResponse:
+        self.calls.append((message, chat_id, type_input, "complete"))
+        return self.conversation_response
+
     async def get_conversation(self, chat_id: str) -> PerplexityResponse:
         self.conversation_calls.append(chat_id)
         return self.conversation_response
