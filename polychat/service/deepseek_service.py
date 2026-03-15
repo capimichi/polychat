@@ -17,6 +17,9 @@ class DeepseekService:
     def logout(self) -> None:
         self.deepseek_client.logout()
 
+    async def login(self, content: str) -> None:
+        await self.deepseek_client.login(content)
+
     async def status(self) -> dict:
         return await self.deepseek_client.status()
 

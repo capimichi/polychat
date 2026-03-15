@@ -17,6 +17,9 @@ class GeminiService:
     def logout(self) -> None:
         self.gemini_client.logout()
 
+    async def login(self, content: str) -> None:
+        await self.gemini_client.login(content)
+
     async def status(self) -> dict:
         return await self.gemini_client.status()
 

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from polychat.client.deepseek_client import DeepseekClient
 
 
@@ -35,3 +37,18 @@ def test_extract_assistant_message_prefers_finished_response_fragment():
 
     assert message == "final answer"
     assert done is True
+
+
+def test_load_user_token_json_reads_persisted_file(tmp_path):
+    client = DeepseekClient(str(tmp_path), user_token_json="")
+    Path(client.user_token_path).write_text('{"token":"abc"}', encoding="utf-8")
+
+    assert client._load_user_token_json() == '{"token": "abc"}'
+
+
+def test_resolve_user_token_json_from_json_payload(tmp_path):
+    client = DeepseekClient(str(tmp_path), user_token_json="")
+
+    token_json = client._resolve_user_token_json_from_login_content('{"token":"abc"}')
+
+    assert token_json == '{"token": "abc"}'

@@ -8,6 +8,7 @@ from polychat.model.api.chat_response import (
     ChatMessageResponse,
     ChatStartResponse,
 )
+from polychat.model.api.login_request import LoginRequest
 from polychat.model.chat_request import ChatRequest
 from polychat.service.qwen_service import QwenService
 
@@ -36,6 +37,12 @@ class QwenController:
             methods=["POST"],
             summary="Invia un messaggio a Qwen e attende la risposta finale",
             response_model=ChatCompleteResponse,
+        )
+        self.router.add_api_route(
+            "/login",
+            self.login,
+            methods=["POST"],
+            summary="Login Qwen",
         )
         self.router.add_api_route(
             "/logout",
@@ -113,4 +120,14 @@ class QwenController:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error fetching Qwen status: {exc}",
+            )
+
+    async def login(self, request: LoginRequest) -> dict:
+        try:
+            await self.qwen_service.login(request.content)
+            return {"status": "ok"}
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error processing Qwen login: {exc}",
             )

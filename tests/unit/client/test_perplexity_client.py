@@ -128,3 +128,13 @@ async def test_status_returns_unavailable_when_browser_bootstrap_fails(tmp_path,
     assert status["is_available"] is False
     assert status["is_logged_in"] is False
     assert "Status check failed: boom" in status["detail"]
+
+
+def test_resolve_session_cookie_from_cookie_export(tmp_path):
+    client = PerplexityClient(str(tmp_path), session_cookie="")
+
+    cookie = client._resolve_session_cookie_from_login_content(
+        '[{"name":"__Secure-next-auth.session-token","value":"perplexity-123","domain":".perplexity.ai"}]'
+    )
+
+    assert cookie == "perplexity-123"

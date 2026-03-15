@@ -6,6 +6,7 @@ from injector import inject
 from browserforge.fingerprints import Screen
 
 from polychat.client.abstract_client import AbstractClient
+from polychat.client.auth_payload_parser import AuthPayloadParser
 from polychat.model.client.perplexity_response import PerplexityResponse
 
 
@@ -31,15 +32,21 @@ class PerplexityClient(AbstractClient):
         self.base_url = "https://www.perplexity.ai/"
         os.makedirs(self.session_dir, exist_ok=True)
 
-    async def login(self, session_cookie: str) -> None:
-        """Salva il cookie di sessione fornito manualmente."""
-        cookie_value = (session_cookie or "").strip()
-        if not cookie_value:
-            raise ValueError("Cookie di sessione mancante")
+    async def login(self, content: str) -> None:
+        cookie_value = self._resolve_session_cookie_from_login_content(content)
+        self._write_text_file(self.cookie_path, cookie_value)
 
-        os.makedirs(self.session_dir, exist_ok=True)
-        with open(self.cookie_path, "w", encoding="utf-8") as f:
-            f.write(cookie_value)
+        constraints = Screen(max_width=1920, max_height=1080)
+        async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
+            context = await browser.new_context()
+            await context.add_cookies([self._build_session_cookie(cookie_value)])
+            page = await context.new_page()
+            self._attach_page_request_logger(page)
+            await self._goto(page, self.base_url, wait_until="domcontentloaded", timeout=20_000)
+            await page.wait_for_timeout(1_500)
+            await context.storage_state(path=self.storage_state_path)
+            await page.close()
+            await context.close()
 
     async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> PerplexityResponse:
         """
@@ -66,17 +73,7 @@ class PerplexityClient(AbstractClient):
                     context_options["storage_state"] = self.storage_state_path
 
                 context = await browser.new_context(**context_options)
-                await context.add_cookies([
-                    {
-                        "name": "__Secure-next-auth.session-token",
-                        "value": session_cookie,
-                        "domain": ".perplexity.ai",
-                        "path": "/",
-                        "httpOnly": True,
-                        "secure": True,
-                        "sameSite": "None",
-                    }
-                ])
+                await context.add_cookies([self._build_session_cookie(session_cookie)])
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
 
@@ -133,17 +130,7 @@ class PerplexityClient(AbstractClient):
                 context_options["storage_state"] = self.storage_state_path
 
             context = await browser.new_context(**context_options)
-            await context.add_cookies([
-                {
-                    "name": "__Secure-next-auth.session-token",
-                    "value": session_cookie,
-                    "domain": ".perplexity.ai",
-                    "path": "/",
-                    "httpOnly": True,
-                    "secure": True,
-                    "sameSite": "None",
-                }
-            ])
+            await context.add_cookies([self._build_session_cookie(session_cookie)])
             page = await context.new_page()
             self._attach_page_request_logger(page)
 
@@ -183,17 +170,7 @@ class PerplexityClient(AbstractClient):
                 if os.path.exists(self.storage_state_path):
                     context_options["storage_state"] = self.storage_state_path
                 context = await browser.new_context(**context_options)
-                await context.add_cookies([
-                    {
-                        "name": "__Secure-next-auth.session-token",
-                        "value": session_cookie,
-                        "domain": ".perplexity.ai",
-                        "path": "/",
-                        "httpOnly": True,
-                        "secure": True,
-                        "sameSite": "None",
-                    }
-                ])
+                await context.add_cookies([self._build_session_cookie(session_cookie)])
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
                 session_detection_task = asyncio.create_task(
@@ -253,17 +230,7 @@ class PerplexityClient(AbstractClient):
                 context_options["storage_state"] = self.storage_state_path
 
             context = await browser.new_context(**context_options)
-            await context.add_cookies([
-                {
-                    "name": "__Secure-next-auth.session-token",
-                    "value": session_cookie,
-                    "domain": ".perplexity.ai",
-                    "path": "/",
-                    "httpOnly": True,
-                    "secure": True,
-                    "sameSite": "None",
-                }
-            ])
+            await context.add_cookies([self._build_session_cookie(session_cookie)])
             page = await context.new_page()
             self._attach_page_request_logger(page)
             response_content = await self._wait_for_thread_response(page, chat_id, post_navigation_wait_ms=10_000)
@@ -349,12 +316,38 @@ class PerplexityClient(AbstractClient):
             return cookie_value
 
         if os.path.exists(self.cookie_path):
-            with open(self.cookie_path, "r", encoding="utf-8") as f:
-                cookie_value = f.read().strip()
+            cookie_value = self._read_text_file(self.cookie_path)
             if cookie_value:
                 return cookie_value
 
         raise ValueError("PERPLEXITY_SESSION_COOKIE mancante o vuoto")
+
+    def _resolve_session_cookie_from_login_content(self, content: str) -> str:
+        parsed = AuthPayloadParser.parse(content)
+        cookie = self._find_cookie(parsed.cookies, "__Secure-next-auth.session-token")
+        cookie_value = cookie["value"] if cookie else parsed.raw_text.strip()
+        if not cookie_value:
+            raise ValueError("Cookie Perplexity '__Secure-next-auth.session-token' mancante")
+        return cookie_value
+
+    @staticmethod
+    def _find_cookie(cookies: list[dict[str, Any]], name: str) -> Optional[dict[str, Any]]:
+        for cookie in cookies:
+            if cookie.get("name") == name:
+                return cookie
+        return None
+
+    @staticmethod
+    def _build_session_cookie(session_cookie: str) -> dict[str, Any]:
+        return {
+            "name": "__Secure-next-auth.session-token",
+            "value": session_cookie,
+            "domain": ".perplexity.ai",
+            "path": "/",
+            "httpOnly": True,
+            "secure": True,
+            "sameSite": "None",
+        }
 
     @classmethod
     def _extract_slug_from_url(cls, current_url: str) -> str:

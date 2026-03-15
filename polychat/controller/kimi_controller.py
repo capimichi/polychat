@@ -3,6 +3,7 @@ from injector import inject
 
 from polychat.mapper.service.chat_to_api_mapper import ChatToApiMapper
 from polychat.model.chat_request import ChatRequest
+from polychat.model.api.login_request import LoginRequest
 from polychat.model.api.chat_response import (
     ChannelStatusResponse,
     ChatCompleteResponse,
@@ -37,6 +38,12 @@ class KimiController:
             methods=["POST"],
             summary="Invia un messaggio a Kimi e attende la risposta finale",
             response_model=ChatCompleteResponse,
+        )
+        self.router.add_api_route(
+            "/login",
+            self.login,
+            methods=["POST"],
+            summary="Login Kimi",
         )
         self.router.add_api_route(
             "/logout",
@@ -107,4 +114,14 @@ class KimiController:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error fetching Kimi status: {exc}",
+            )
+
+    async def login(self, request: LoginRequest) -> dict:
+        try:
+            await self.kimi_service.login(request.content)
+            return {"status": "ok"}
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error processing Kimi login: {exc}",
             )

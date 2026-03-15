@@ -9,6 +9,7 @@ from camoufox.async_api import AsyncCamoufox
 from injector import inject
 
 from polychat.client.abstract_client import AbstractClient
+from polychat.client.auth_payload_parser import AuthPayloadParser
 from polychat.model.client.deepseek_response import DeepseekResponse
 
 
@@ -34,9 +35,27 @@ class DeepseekClient(AbstractClient):
         super().__init__()
         self.session_dir = os.path.join(session_dir, "deepseek")
         self.storage_state_path = os.path.join(self.session_dir, "deepseek_state.json")
+        self.user_token_path = os.path.join(self.session_dir, "deepseek_user_token.json")
         self.headless = headless
         self.user_token_json = user_token_json
         os.makedirs(self.session_dir, exist_ok=True)
+
+    async def login(self, content: str) -> None:
+        token_json = self._resolve_user_token_json_from_login_content(content)
+        self._write_text_file(self.user_token_path, token_json)
+
+        constraints = Screen(max_width=1920, max_height=1080)
+        async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
+            context = await browser.new_context()
+            page = await context.new_page()
+            self._attach_page_request_logger(page)
+            await self._goto(page, self.BASE_URL, wait_until="domcontentloaded", timeout=20_000)
+            await self._set_user_token(page, token_json)
+            await page.reload(wait_until="domcontentloaded", timeout=20_000)
+            await page.wait_for_timeout(1_500)
+            await context.storage_state(path=self.storage_state_path)
+            await page.close()
+            await context.close()
 
     async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> DeepseekResponse:
         token_json = self._load_user_token_json()
@@ -361,9 +380,24 @@ class DeepseekClient(AbstractClient):
 
     def _load_user_token_json(self) -> str:
         token_json = (self.user_token_json or "").strip()
-        if not token_json:
-            raise ValueError("DEEPSEEK_USER_TOKEN_JSON mancante o vuoto")
-        return self._validate_user_token_json(token_json)
+        if token_json:
+            return self._validate_user_token_json(token_json)
+        if os.path.exists(self.user_token_path):
+            token_json = self._read_text_file(self.user_token_path)
+            if token_json:
+                return self._validate_user_token_json(token_json)
+        raise ValueError("DEEPSEEK_USER_TOKEN_JSON mancante o vuoto")
+
+    def _resolve_user_token_json_from_login_content(self, content: str) -> str:
+        parsed = AuthPayloadParser.parse(content)
+        if parsed.raw_json_value is not None:
+            return self._validate_user_token_json(json.dumps(parsed.raw_json_value, ensure_ascii=False))
+
+        for cookie in parsed.cookies:
+            if cookie.get("name") == "userToken":
+                return self._validate_user_token_json(str(cookie.get("value", "")))
+
+        return self._validate_user_token_json(parsed.raw_text.strip())
 
     async def _set_user_token(self, page, token_json: str) -> None:
         await page.evaluate(

@@ -17,6 +17,9 @@ class QwenService:
     def logout(self) -> None:
         self.qwen_client.logout()
 
+    async def login(self, content: str) -> None:
+        await self.qwen_client.login(content)
+
     async def status(self) -> dict:
         return await self.qwen_client.status()
 

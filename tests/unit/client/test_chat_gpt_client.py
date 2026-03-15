@@ -191,6 +191,23 @@ def test_get_conversations_raises_when_session_cookie_is_missing(tmp_path):
         client.get_conversations()
 
 
+def test_load_session_cookie_reads_persisted_file(tmp_path):
+    client = ChatGptClient(str(tmp_path), session_cookie="")
+    Path(client.cookie_path).write_text("persisted-cookie", encoding="utf-8")
+
+    assert client._load_session_cookie() == "persisted-cookie"
+
+
+def test_resolve_session_cookie_from_cookie_export(tmp_path):
+    client = ChatGptClient(str(tmp_path), session_cookie="")
+
+    cookie = client._resolve_session_cookie_from_login_content(
+        '[{"name":"__Secure-next-auth.session-token","value":"cookie-123","domain":"chatgpt.com"}]'
+    )
+
+    assert cookie == "cookie-123"
+
+
 @pytest.mark.asyncio
 async def test_ask_does_not_select_workspace_when_workspace_name_is_empty(tmp_path, monkeypatch):
     client = ChatGptClient(str(tmp_path), session_cookie="cookie", workspace_name="")

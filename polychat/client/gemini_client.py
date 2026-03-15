@@ -9,6 +9,7 @@ from camoufox.async_api import AsyncCamoufox
 from injector import inject
 
 from polychat.client.abstract_client import AbstractClient
+from polychat.client.auth_payload_parser import AuthPayloadParser
 from polychat.model.client.gemini_response import GeminiResponse
 
 
@@ -32,10 +33,33 @@ class GeminiClient(AbstractClient):
         super().__init__()
         self.session_dir = os.path.join(session_dir, "gemini")
         self.storage_state_path = os.path.join(self.session_dir, "gemini_state.json")
+        self.cookies_path = os.path.join(self.session_dir, "gemini_cookies.json")
         self.headless = headless
         self.cookie_1psid = cookie_1psid
         self.cookie_1psidts = cookie_1psidts
         os.makedirs(self.session_dir, exist_ok=True)
+
+    async def login(self, content: str) -> None:
+        cookie_1psid, cookie_1psidts = self._resolve_session_cookies_from_login_content(content)
+        self._write_json_file(
+            self.cookies_path,
+            {
+                "__Secure-1PSID": cookie_1psid,
+                "__Secure-1PSIDTS": cookie_1psidts,
+            },
+        )
+
+        constraints = Screen(max_width=1920, max_height=1080)
+        async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
+            context = await browser.new_context()
+            await context.add_cookies(self._build_session_cookies(cookie_1psid, cookie_1psidts))
+            page = await context.new_page()
+            self._attach_page_request_logger(page)
+            await self._goto(page, self.BASE_URL, wait_until="domcontentloaded", timeout=20_000)
+            await page.wait_for_timeout(1_500)
+            await context.storage_state(path=self.storage_state_path)
+            await page.close()
+            await context.close()
 
     async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> GeminiResponse:
         cookie_1psid, cookie_1psidts = self._load_session_cookies()
@@ -48,26 +72,7 @@ class GeminiClient(AbstractClient):
                     context_options["storage_state"] = self.storage_state_path
 
                 context = await browser.new_context(**context_options)
-                await context.add_cookies([
-                    {
-                        "name": "__Secure-1PSID",
-                        "value": cookie_1psid,
-                        "domain": ".google.com",
-                        "path": "/",
-                        "httpOnly": True,
-                        "secure": True,
-                        "sameSite": "None",
-                    },
-                    {
-                        "name": "__Secure-1PSIDTS",
-                        "value": cookie_1psidts,
-                        "domain": ".google.com",
-                        "path": "/",
-                        "httpOnly": True,
-                        "secure": True,
-                        "sameSite": "None",
-                    },
-                ])
+                await context.add_cookies(self._build_session_cookies(cookie_1psid, cookie_1psidts))
 
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
@@ -120,26 +125,7 @@ class GeminiClient(AbstractClient):
                 context_options["storage_state"] = self.storage_state_path
 
             context = await browser.new_context(**context_options)
-            await context.add_cookies([
-                {
-                    "name": "__Secure-1PSID",
-                    "value": cookie_1psid,
-                    "domain": ".google.com",
-                    "path": "/",
-                    "httpOnly": True,
-                    "secure": True,
-                    "sameSite": "None",
-                },
-                {
-                    "name": "__Secure-1PSIDTS",
-                    "value": cookie_1psidts,
-                    "domain": ".google.com",
-                    "path": "/",
-                    "httpOnly": True,
-                    "secure": True,
-                    "sameSite": "None",
-                },
-            ])
+            await context.add_cookies(self._build_session_cookies(cookie_1psid, cookie_1psidts))
 
             page = await context.new_page()
             self._attach_page_request_logger(page)
@@ -262,26 +248,7 @@ class GeminiClient(AbstractClient):
                 context_options["storage_state"] = self.storage_state_path
 
             context = await browser.new_context(**context_options)
-            await context.add_cookies([
-                {
-                    "name": "__Secure-1PSID",
-                    "value": cookie_1psid,
-                    "domain": ".google.com",
-                    "path": "/",
-                    "httpOnly": True,
-                    "secure": True,
-                    "sameSite": "None",
-                },
-                {
-                    "name": "__Secure-1PSIDTS",
-                    "value": cookie_1psidts,
-                    "domain": ".google.com",
-                    "path": "/",
-                    "httpOnly": True,
-                    "secure": True,
-                    "sameSite": "None",
-                },
-            ])
+            await context.add_cookies(self._build_session_cookies(cookie_1psid, cookie_1psidts))
 
             page = await context.new_page()
             self._attach_page_request_logger(page)
@@ -318,26 +285,7 @@ class GeminiClient(AbstractClient):
                 if os.path.exists(self.storage_state_path):
                     context_options["storage_state"] = self.storage_state_path
                 context = await browser.new_context(**context_options)
-                await context.add_cookies([
-                    {
-                        "name": "__Secure-1PSID",
-                        "value": cookie_1psid,
-                        "domain": ".google.com",
-                        "path": "/",
-                        "httpOnly": True,
-                        "secure": True,
-                        "sameSite": "None",
-                    },
-                    {
-                        "name": "__Secure-1PSIDTS",
-                        "value": cookie_1psidts,
-                        "domain": ".google.com",
-                        "path": "/",
-                        "httpOnly": True,
-                        "secure": True,
-                        "sameSite": "None",
-                    },
-                ])
+                await context.add_cookies(self._build_session_cookies(cookie_1psid, cookie_1psidts))
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
                 await self._goto(page, self.BASE_URL, wait_until="domcontentloaded", timeout=20_000)
@@ -368,8 +316,53 @@ class GeminiClient(AbstractClient):
     def _load_session_cookies(self) -> tuple[str, str]:
         cookie_1psid = (self.cookie_1psid or "").strip()
         cookie_1psidts = (self.cookie_1psidts or "").strip()
+        if cookie_1psid and cookie_1psidts:
+            return cookie_1psid, cookie_1psidts
+
+        if os.path.exists(self.cookies_path):
+            persisted = self._read_json_file(self.cookies_path)
+            cookie_1psid = str(persisted.get("__Secure-1PSID", "")).strip()
+            cookie_1psidts = str(persisted.get("__Secure-1PSIDTS", "")).strip()
+            if cookie_1psid and cookie_1psidts:
+                return cookie_1psid, cookie_1psidts
+
+        raise ValueError("GEMINI_COOKIE_1PSID e GEMINI_COOKIE_1PSIDTS sono obbligatori")
+
+    def _resolve_session_cookies_from_login_content(self, content: str) -> tuple[str, str]:
+        parsed = AuthPayloadParser.parse(content)
+        values = {
+            cookie.get("name"): str(cookie.get("value", ""))
+            for cookie in parsed.cookies
+            if cookie.get("name") in {"__Secure-1PSID", "__Secure-1PSIDTS"}
+        }
+        cookie_1psid = values.get("__Secure-1PSID", "").strip()
+        cookie_1psidts = values.get("__Secure-1PSIDTS", "").strip()
         if not cookie_1psid or not cookie_1psidts:
-            raise ValueError("GEMINI_COOKIE_1PSID e GEMINI_COOKIE_1PSIDTS sono obbligatori")
+            raise ValueError("Payload Gemini incompleto: servono __Secure-1PSID e __Secure-1PSIDTS")
+        return cookie_1psid, cookie_1psidts
+
+    @staticmethod
+    def _build_session_cookies(cookie_1psid: str, cookie_1psidts: str) -> list[dict]:
+        return [
+            {
+                "name": "__Secure-1PSID",
+                "value": cookie_1psid,
+                "domain": ".google.com",
+                "path": "/",
+                "httpOnly": True,
+                "secure": True,
+                "sameSite": "None",
+            },
+            {
+                "name": "__Secure-1PSIDTS",
+                "value": cookie_1psidts,
+                "domain": ".google.com",
+                "path": "/",
+                "httpOnly": True,
+                "secure": True,
+                "sameSite": "None",
+            },
+        ]
         return cookie_1psid, cookie_1psidts
 
     @staticmethod

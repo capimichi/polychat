@@ -14,9 +14,9 @@ class KimiService:
         self.kimi_client = kimi_client
         self.kimi_chat_mapper = kimi_chat_mapper
 
-    async def login(self) -> None:
+    async def login(self, content: str) -> None:
         """Esegue il login a Kimi tramite il client."""
-        await self.kimi_client.login()
+        await self.kimi_client.login(content)
 
     def logout(self) -> None:
         self.kimi_client.logout()
