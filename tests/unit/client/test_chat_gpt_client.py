@@ -176,6 +176,52 @@ class _AppsAtWorkPage:
         return None
 
 
+class _FakeResponse:
+    def __init__(self, url: str, payload: dict):
+        self.url = url
+        self._payload = payload
+
+    async def json(self) -> dict:
+        return self._payload
+
+
+class _FakeExpectResponse:
+    def __init__(self, response: _FakeResponse):
+        self.value = self._resolve(response)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def _resolve(self, response: _FakeResponse) -> _FakeResponse:
+        return response
+
+
+class _ConversationFetchPage:
+    def __init__(self, response: _FakeResponse):
+        self._response = response
+        self.handlers = {}
+
+    def on(self, event: str, handler) -> None:
+        self.handlers[event] = handler
+
+    def expect_response(self, predicate, timeout: int):
+        assert timeout == ChatGptClient.CONVERSATION_FETCH_TIMEOUT_MS
+        assert predicate(self._response) is True
+        return _FakeExpectResponse(self._response)
+
+    async def goto(self, _url: str, **_kwargs) -> None:
+        return None
+
+    async def wait_for_load_state(self, _state: str, timeout: int | None = None) -> None:
+        return None
+
+    async def wait_for_timeout(self, _timeout: int) -> None:
+        return None
+
+
 @pytest.mark.asyncio
 async def test_ask_raises_when_session_cookie_is_missing(tmp_path):
     client = ChatGptClient(str(tmp_path), session_cookie=" ")
@@ -332,3 +378,24 @@ async def test_try_skip_apps_at_work_selection_clicks_skip(tmp_path):
 
     assert selected is True
     assert page.skip.clicked is True
+
+
+def test_is_matching_conversation_response_ignores_query_params(tmp_path):
+    client = ChatGptClient(str(tmp_path), session_cookie="cookie")
+
+    assert client._is_matching_conversation_response(
+        "https://chatgpt.com/backend-api/conversation/chat-123?offset=0",
+        "https://chatgpt.com/backend-api/conversation/chat-123",
+    ) is True
+
+
+@pytest.mark.asyncio
+async def test_fetch_conversation_via_page_awaits_conversation_response(tmp_path):
+    client = ChatGptClient(str(tmp_path), session_cookie="cookie")
+    payload = {"conversation_id": "chat-123", "mapping": {}, "current_node": None}
+    response = _FakeResponse("https://chatgpt.com/backend-api/conversation/chat-123", payload)
+    page = _ConversationFetchPage(response)
+
+    result = await client._fetch_conversation_via_page(page, "chat-123")
+
+    assert result == payload

@@ -35,6 +35,8 @@ class ChatGptClient(AbstractClient):
     POST_SUBMIT_WAIT_MS = 5_000
     COMPLETE_WAIT_TIMEOUT_SECONDS = 60.0
     COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 2.0
+    CONVERSATION_FETCH_TIMEOUT_MS = 30_000
+    CONVERSATION_PAGE_LOAD_TIMEOUT_MS = 10_000
 
     @inject
     def __init__(
@@ -569,19 +571,13 @@ class ChatGptClient(AbstractClient):
 
     async def _fetch_conversation_via_page(self, page, chat_id: str) -> dict:  # noqa: ANN001
         conversation_url = f"https://chatgpt.com/backend-api/conversation/{chat_id}"
-        conversation_payload = {}
         image_download_url = ""
         response_received = asyncio.Event()
         last_image_seen_at = 0.0
 
         async def handle_response(response):
-            nonlocal conversation_payload, image_download_url, last_image_seen_at
+            nonlocal image_download_url, last_image_seen_at
             try:
-                if response.url == conversation_url:
-                    conversation_payload = await response.json()
-                    response_received.set()
-                    return
-
                 if "/backend-api/files/download/" in response.url and f"conversation_id={chat_id}" in response.url:
                     payload = await response.json()
                     if isinstance(payload, dict) and payload.get("download_url"):
@@ -593,9 +589,21 @@ class ChatGptClient(AbstractClient):
         page.on("response", handle_response)
 
         url = f"https://chatgpt.com/c/{chat_id}"
-        await self._goto(page, url)
-        await page.wait_for_load_state("networkidle")
-        wait_timeout_ms = 30_000
+        async with page.expect_response(
+            lambda response: self._is_matching_conversation_response(response.url, conversation_url),
+            timeout=self.CONVERSATION_FETCH_TIMEOUT_MS,
+        ) as conversation_response_info:
+            await self._goto(page, url, wait_until="domcontentloaded", timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
+            except Exception:
+                logger.info("Conversation page did not reach domcontentloaded quickly; continuing")
+
+        conversation_response = await conversation_response_info.value
+        conversation_payload = await conversation_response.json()
+        response_received.set()
+
+        wait_timeout_ms = self.CONVERSATION_FETCH_TIMEOUT_MS
         poll_interval_ms = 1_000
         elapsed_ms = 0
 
@@ -615,6 +623,12 @@ class ChatGptClient(AbstractClient):
         if image_download_url:
             conversation_payload["image_download_url"] = image_download_url
         return conversation_payload
+
+    @staticmethod
+    def _is_matching_conversation_response(response_url: str, conversation_url: str) -> bool:
+        normalized_response_url = response_url.split("?", 1)[0].rstrip("/")
+        normalized_conversation_url = conversation_url.rstrip("/")
+        return normalized_response_url == normalized_conversation_url
 
     def proxy_download(self, download_url: str) -> tuple[bytes, int, str, str]:
         """Proxy download usando il cookie ChatGPT in header Cookie."""
