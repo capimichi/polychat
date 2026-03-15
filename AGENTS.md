@@ -19,6 +19,10 @@
 - Client helpers should centralize cross-cutting concerns (es. retry policy, input mode) in the base client and reuse from specific providers; avoid duplicare logica o introdurre modelli non documentati.
 - Controllers are provider-scoped (e.g., `PerplexityChatController`) with routers mounted under `/<provider>/chats`.
 - Keep modules small: avoid mixing unrelated classes/functions in the same file; split fakes/builders/fixtures across separate modules.
+- Do not place dataclasses in files that also contain other classes; prefer a dedicated file per model.
+- Prefer Pydantic models over dataclasses for application models.
+- Do not place parsing or normalization helpers inside the client layer when they are not client-specific; keep layer boundaries explicit.
+- Put models under the `polychat/model/` layer and keep one model per file.
 - Keep all `__init__.py` files empty; do not use them for re-exports.
 - Keep comments minimal and purposeful; avoid non-ASCII unless required.
 

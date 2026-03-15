@@ -11,10 +11,10 @@ from camoufox.async_api import AsyncCamoufox
 from injector import inject
 
 from polychat.client.abstract_client import AbstractClient
-from polychat.client.auth_payload_parser import AuthPayloadParser
 from polychat.model.client.chatgpt_ask_result import ChatGptAskResult
 from polychat.model.client.chatgpt_conversation_detail import ConversationDetail
 from polychat.model.client.chatgpt_conversation_list import ConversationList
+from polychat.parser.auth_payload_parser import AuthPayloadParser
 
 logger = logging.getLogger(__name__)
 

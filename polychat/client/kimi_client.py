@@ -8,8 +8,8 @@ from camoufox.async_api import AsyncCamoufox
 from injector import inject
 
 from polychat.client.abstract_client import AbstractClient
-from polychat.client.auth_payload_parser import AuthPayloadParser
 from polychat.model.client.kimi_response import KimiResponse
+from polychat.parser.auth_payload_parser import AuthPayloadParser
 
 
 class KimiClient(AbstractClient):

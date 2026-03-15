@@ -1,6 +1,6 @@
 import pytest
 
-from polychat.client.auth_payload_parser import AuthPayloadParser
+from polychat.parser.auth_payload_parser import AuthPayloadParser
 
 
 def test_parse_json_cookie_export():

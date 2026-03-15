@@ -6,8 +6,8 @@ from injector import inject
 from browserforge.fingerprints import Screen
 
 from polychat.client.abstract_client import AbstractClient
-from polychat.client.auth_payload_parser import AuthPayloadParser
 from polychat.model.client.perplexity_response import PerplexityResponse
+from polychat.parser.auth_payload_parser import AuthPayloadParser
 
 
 class PerplexityClient(AbstractClient):

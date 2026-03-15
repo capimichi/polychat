@@ -1,13 +1,7 @@
 import json
-from dataclasses import dataclass
 from typing import Any
 
-
-@dataclass
-class ParsedAuthPayload:
-    cookies: list[dict[str, Any]]
-    raw_json_value: Any | None = None
-    raw_text: str = ""
+from polychat.model.auth.parsed_auth_payload import ParsedAuthPayload
 
 
 class AuthPayloadParser:
@@ -21,9 +15,12 @@ class AuthPayloadParser:
             return cls._parse_json_payload(raw_content)
 
         if cls._looks_like_netscape(raw_content):
-            return ParsedAuthPayload(cookies=cls._parse_netscape_payload(raw_content), raw_text=raw_content)
+            return ParsedAuthPayload(
+                cookies=cls._parse_netscape_payload(raw_content),
+                raw_text=raw_content,
+            )
 
-        return ParsedAuthPayload(cookies=[], raw_text=raw_content)
+        return ParsedAuthPayload(raw_text=raw_content)
 
     @staticmethod
     def _looks_like_json(content: str) -> bool:
@@ -59,7 +56,10 @@ class AuthPayloadParser:
                 raw_text=content,
             )
 
-        return ParsedAuthPayload(cookies=[], raw_json_value=parsed, raw_text=content)
+        return ParsedAuthPayload(
+            raw_json_value=parsed,
+            raw_text=content,
+        )
 
     @staticmethod
     def _is_cookie_mapping(value: Any) -> bool:
