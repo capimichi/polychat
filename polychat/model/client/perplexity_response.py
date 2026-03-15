@@ -48,14 +48,23 @@ class PerplexityResponse(BaseModel):
         if not self.blocks:
             return None
 
+        answers: List[str] = []
+
         for block in self.blocks:
             intended_usage = block.get("intended_usage", "")
             if intended_usage == "ask_text" or str(intended_usage).startswith("ask_text"):
                 markdown_block = block.get("markdown_block")
                 if markdown_block:
-                    return markdown_block.get("answer")
+                    answer = markdown_block.get("answer")
+                    if answer:
+                        normalized_answer = answer.strip()
+                        if normalized_answer:
+                            answers.append(normalized_answer)
 
-        return None
+        if not answers:
+            return None
+
+        return "\n\n".join(answers)
 
     @computed_field
     @property
