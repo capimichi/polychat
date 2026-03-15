@@ -203,6 +203,7 @@ class _ConversationFetchPage:
     def __init__(self, response: _FakeResponse):
         self._response = response
         self.handlers = {}
+        self.waited_timeouts = []
 
     def on(self, event: str, handler) -> None:
         self.handlers[event] = handler
@@ -219,6 +220,25 @@ class _ConversationFetchPage:
         return None
 
     async def wait_for_timeout(self, _timeout: int) -> None:
+        self.waited_timeouts.append(_timeout)
+        return None
+
+
+class _ConversationFetchPageWithLateImage(_ConversationFetchPage):
+    def __init__(self, response: _FakeResponse, image_response: _FakeResponse):
+        super().__init__(response)
+        self._image_response = image_response
+        self._emitted_image = False
+
+    async def wait_for_timeout(self, _timeout: int) -> None:
+        self.waited_timeouts.append(_timeout)
+        if (
+            _timeout == ChatGptClient.IMAGE_DOWNLOAD_GRACE_PERIOD_MS
+            and not self._emitted_image
+            and "response" in self.handlers
+        ):
+            self._emitted_image = True
+            await self.handlers["response"](self._image_response)
         return None
 
 
@@ -399,3 +419,20 @@ async def test_fetch_conversation_via_page_awaits_conversation_response(tmp_path
     result = await client._fetch_conversation_via_page(page, "chat-123")
 
     assert result == payload
+    assert ChatGptClient.IMAGE_DOWNLOAD_GRACE_PERIOD_MS in page.waited_timeouts
+
+
+@pytest.mark.asyncio
+async def test_fetch_conversation_via_page_collects_late_image_download_url(tmp_path):
+    client = ChatGptClient(str(tmp_path), session_cookie="cookie")
+    payload = {"conversation_id": "chat-123", "mapping": {}, "current_node": None}
+    response = _FakeResponse("https://chatgpt.com/backend-api/conversation/chat-123", payload)
+    image_response = _FakeResponse(
+        "https://chatgpt.com/backend-api/files/download/file-1?conversation_id=chat-123",
+        {"download_url": "https://files.chatgpt.com/file-1.png"},
+    )
+    page = _ConversationFetchPageWithLateImage(response, image_response)
+
+    result = await client._fetch_conversation_via_page(page, "chat-123")
+
+    assert result["image_download_url"] == "https://files.chatgpt.com/file-1.png"

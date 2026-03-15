@@ -37,6 +37,7 @@ class ChatGptClient(AbstractClient):
     COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 2.0
     CONVERSATION_FETCH_TIMEOUT_MS = 30_000
     CONVERSATION_PAGE_LOAD_TIMEOUT_MS = 10_000
+    IMAGE_DOWNLOAD_GRACE_PERIOD_MS = 5_000
 
     @inject
     def __init__(
@@ -572,7 +573,6 @@ class ChatGptClient(AbstractClient):
     async def _fetch_conversation_via_page(self, page, chat_id: str) -> dict:  # noqa: ANN001
         conversation_url = f"https://chatgpt.com/backend-api/conversation/{chat_id}"
         image_download_url = ""
-        response_received = asyncio.Event()
         last_image_seen_at = 0.0
 
         async def handle_response(response):
@@ -601,17 +601,9 @@ class ChatGptClient(AbstractClient):
 
         conversation_response = await conversation_response_info.value
         conversation_payload = await conversation_response.json()
-        response_received.set()
+        await page.wait_for_timeout(self.IMAGE_DOWNLOAD_GRACE_PERIOD_MS)
 
-        wait_timeout_ms = self.CONVERSATION_FETCH_TIMEOUT_MS
-        poll_interval_ms = 1_000
-        elapsed_ms = 0
-
-        while not response_received.is_set() and elapsed_ms < wait_timeout_ms:
-            await page.wait_for_timeout(poll_interval_ms)
-            elapsed_ms += poll_interval_ms
-
-        if response_received.is_set() and last_image_seen_at > 0:
+        if last_image_seen_at > 0:
             while True:
                 elapsed = time.monotonic() - last_image_seen_at
                 if elapsed >= 2.0:
