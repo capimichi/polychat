@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -60,8 +61,10 @@ class _FakePage:
 class _FakeContext:
     def __init__(self, page: _FakePage):
         self._page = page
+        self.cookies = []
 
     async def add_cookies(self, _cookies) -> None:
+        self.cookies.extend(_cookies)
         return None
 
     async def new_page(self) -> _FakePage:
@@ -309,6 +312,23 @@ def test_load_session_cookie_reads_persisted_file(tmp_path):
     assert client._load_session_cookie() == "persisted-cookie"
 
 
+def test_load_session_cookie_reads_persisted_chunked_file(tmp_path):
+    client = ChatGptClient(str(tmp_path), session_cookie="")
+    Path(client.cookie_path).write_text(
+        json.dumps(
+            {
+                "cookies": [
+                    {"name": "__Secure-next-auth.session-token.0", "value": "chunk-0"},
+                    {"name": "__Secure-next-auth.session-token.1", "value": "chunk-1"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert client._load_session_cookie() == "chunk-0chunk-1"
+
+
 def test_resolve_session_cookie_from_cookie_export(tmp_path):
     client = ChatGptClient(str(tmp_path), session_cookie="")
 
@@ -317,6 +337,125 @@ def test_resolve_session_cookie_from_cookie_export(tmp_path):
     )
 
     assert cookie == "cookie-123"
+
+
+def test_resolve_session_cookie_from_chunked_cookie_export(tmp_path):
+    client = ChatGptClient(str(tmp_path), session_cookie="")
+
+    cookie = client._resolve_session_cookie_from_login_content(
+        '[{"name":"__Secure-next-auth.session-token.0","value":"chunk-0","domain":"chatgpt.com"},'
+        '{"name":"__Secure-next-auth.session-token.1","value":"chunk-1","domain":"chatgpt.com"}]'
+    )
+
+    assert cookie == "chunk-0chunk-1"
+
+
+def test_load_session_auth_prefers_single_env_cookie_over_chunks(tmp_path):
+    client = ChatGptClient(
+        str(tmp_path),
+        session_cookie="cookie-123",
+        session_cookie_chunks=["chunk-0", "chunk-1"],
+    )
+
+    session_auth = client._load_session_auth()
+
+    assert session_auth["is_chunked"] is False
+    assert session_auth["joined_value"] == "cookie-123"
+    assert session_auth["cookie_header"] == "__Secure-next-auth.session-token=cookie-123"
+
+
+def test_load_session_auth_uses_chunked_env_when_single_cookie_missing(tmp_path):
+    client = ChatGptClient(
+        str(tmp_path),
+        session_cookie="",
+        session_cookie_chunks=["chunk-0", "chunk-1"],
+    )
+
+    session_auth = client._load_session_auth()
+
+    assert session_auth["is_chunked"] is True
+    assert session_auth["joined_value"] == "chunk-0chunk-1"
+    assert session_auth["cookie_header"] == (
+        "__Secure-next-auth.session-token.0=chunk-0; "
+        "__Secure-next-auth.session-token.1=chunk-1"
+    )
+    assert [cookie["name"] for cookie in session_auth["browser_cookies"]] == [
+        "__Secure-next-auth.session-token.0",
+        "__Secure-next-auth.session-token.1",
+    ]
+
+
+def test_load_session_auth_raises_on_empty_chunk_value(tmp_path):
+    client = ChatGptClient(
+        str(tmp_path),
+        session_cookie="",
+        session_cookie_chunks=["chunk-0", ""],
+    )
+
+    with pytest.raises(ValueError, match="CHATGPT_SESSION_COOKIE_1 mancante o vuoto"):
+        client._load_session_auth()
+
+
+@pytest.mark.asyncio
+async def test_login_adds_chunked_browser_cookies(tmp_path, monkeypatch):
+    page = _FakePage()
+
+    class _TrackingAsyncCamoufox:
+        def __init__(self, **_kwargs):
+            self._browser = _FakeBrowser(page)
+
+        async def __aenter__(self) -> _FakeBrowser:
+            return self._browser
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    client = ChatGptClient(str(tmp_path), session_cookie="")
+    monkeypatch.setattr("polychat.client.chat_gpt_client.AsyncCamoufox", _TrackingAsyncCamoufox)
+
+    await client.login(
+        '[{"name":"__Secure-next-auth.session-token.0","value":"chunk-0","domain":"chatgpt.com"},'
+        '{"name":"__Secure-next-auth.session-token.1","value":"chunk-1","domain":"chatgpt.com"}]'
+    )
+
+    assert client._read_json_file(client.cookie_path) == {
+        "cookies": [
+            {
+                "name": "__Secure-next-auth.session-token.0",
+                "value": "chunk-0",
+                "domain": "chatgpt.com",
+                "path": "/",
+                "httpOnly": True,
+                "secure": True,
+                "sameSite": "None",
+            },
+            {
+                "name": "__Secure-next-auth.session-token.1",
+                "value": "chunk-1",
+                "domain": "chatgpt.com",
+                "path": "/",
+                "httpOnly": True,
+                "secure": True,
+                "sameSite": "None",
+            },
+        ]
+    }
+    assert client._load_session_auth()["cookie_header"] == (
+        "__Secure-next-auth.session-token.0=chunk-0; "
+        "__Secure-next-auth.session-token.1=chunk-1"
+    )
+
+
+def test_auth_headers_include_cookie_header_when_provided():
+    headers = ChatGptClient._auth_headers(
+        "joined-token",
+        "__Secure-next-auth.session-token.0=chunk-0; __Secure-next-auth.session-token.1=chunk-1",
+    )
+
+    assert headers["authorization"] == "Bearer joined-token"
+    assert headers["cookie"] == (
+        "__Secure-next-auth.session-token.0=chunk-0; __Secure-next-auth.session-token.1=chunk-1"
+    )
 
 
 @pytest.mark.asyncio

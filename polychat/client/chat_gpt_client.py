@@ -1,9 +1,10 @@
 import asyncio
 from datetime import datetime
+import json
 import logging
 import os
 import time
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 import requests
 from browserforge.fingerprints import Screen
@@ -45,6 +46,7 @@ class ChatGptClient(AbstractClient):
         session_dir: str,
         headless: bool | Literal["virtual"] = False,
         session_cookie: str = "",
+        session_cookie_chunks: Optional[list[str]] = None,
         workspace_name: str = "",
     ):
         super().__init__()
@@ -53,17 +55,18 @@ class ChatGptClient(AbstractClient):
         self.cookie_path = os.path.join(self.session_dir, "chatgpt_cookie.txt")
         self.headless = headless
         self.session_cookie = session_cookie
+        self.session_cookie_chunks = session_cookie_chunks or []
         self.workspace_name = (workspace_name or "").strip()
         os.makedirs(self.session_dir, exist_ok=True)
 
     async def login(self, content: str) -> None:
-        session_cookie = self._resolve_session_cookie_from_login_content(content)
-        self._write_text_file(self.cookie_path, session_cookie)
+        session_auth = self._resolve_session_auth_from_login_content(content)
+        self._persist_session_auth(session_auth)
 
         constraints = Screen(max_width=1920, max_height=1080)
         async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
             context = await browser.new_context()
-            await context.add_cookies([self._build_session_cookie(session_cookie)])
+            await context.add_cookies(session_auth["browser_cookies"])
             page = await context.new_page()
             self._attach_page_request_logger(page)
             await self._goto(page, "https://chatgpt.com/", wait_until="domcontentloaded", timeout=20_000)
@@ -77,10 +80,10 @@ class ChatGptClient(AbstractClient):
         self._clear_session_dir(self.session_dir)
 
     async def status(self) -> dict:
-        session_cookie = (self.session_cookie or "").strip()
         constraints = Screen(max_width=1920, max_height=1080)
         content = ""
         try:
+            session_auth = self._load_session_auth(optional=True)
             async with AsyncCamoufox(
                 headless=self.headless,
                 humanize=True,
@@ -90,8 +93,8 @@ class ChatGptClient(AbstractClient):
                 if os.path.exists(self.storage_state_path):
                     context_options["storage_state"] = self.storage_state_path
                 context = await browser.new_context(**context_options)
-                if session_cookie:
-                    await context.add_cookies([self._build_session_cookie(session_cookie)])
+                if session_auth:
+                    await context.add_cookies(session_auth["browser_cookies"])
 
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
@@ -124,7 +127,7 @@ class ChatGptClient(AbstractClient):
 
     def get_conversations(self, offset: int = 0, limit: int = 28) -> ConversationList:
         """Recupera la lista delle conversazioni esistenti."""
-        session_cookie = self._load_session_cookie()
+        session_auth = self._load_session_auth()
 
         url = self.CHAT_LIST_URL.format(offset=offset, limit=limit)
 
@@ -133,7 +136,7 @@ class ChatGptClient(AbstractClient):
                 session,
                 "GET",
                 url,
-                headers=self._auth_headers(session_cookie, ""),
+                headers=self._auth_headers(session_auth["joined_value"], session_auth["cookie_header"], ""),
                 timeout=30,
             )
             response.raise_for_status()
@@ -144,8 +147,8 @@ class ChatGptClient(AbstractClient):
         if not chat_id:
             raise ValueError("chat_id mancante")
 
-        session_cookie = self._load_session_cookie()
-        payload = await self._fetch_conversation_via_browser(chat_id, session_cookie)
+        session_auth = self._load_session_auth()
+        payload = await self._fetch_conversation_via_browser(chat_id, session_auth)
         return ConversationDetail.model_validate(payload)
 
     async def ask(self, message: str, chat_id: Optional[str] = None, type_input: bool = True) -> ChatGptAskResult:
@@ -154,7 +157,7 @@ class ChatGptClient(AbstractClient):
         su /backend-api/f/conversation, poi copia l'ultima risposta cliccando il bottone
         con aria-label="Copia" e restituisce il contenuto della clipboard come ChatGptAskResult.
         """
-        session_cookie = self._load_session_cookie()
+        session_auth = self._load_session_auth()
 
         async def _attempt() -> ChatGptAskResult:
             constraints = Screen(max_width=1920, max_height=1080)
@@ -169,7 +172,7 @@ class ChatGptClient(AbstractClient):
                 if os.path.exists(self.storage_state_path):
                     context_options["storage_state"] = self.storage_state_path
                 context = await browser.new_context(**context_options)
-                await context.add_cookies([self._build_session_cookie(session_cookie)])
+                await context.add_cookies(session_auth["browser_cookies"])
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
 
@@ -257,7 +260,7 @@ class ChatGptClient(AbstractClient):
         chat_id: Optional[str] = None,
         type_input: bool = True,
     ) -> ConversationDetail:
-        session_cookie = self._load_session_cookie()
+        session_auth = self._load_session_auth()
         constraints = Screen(max_width=1920, max_height=1080)
 
         logger.info("ChatGPT ask_and_wait started (chat_id=%s, workspace=%s)", chat_id, self.workspace_name or "<none>")
@@ -270,7 +273,7 @@ class ChatGptClient(AbstractClient):
             if os.path.exists(self.storage_state_path):
                 context_options["storage_state"] = self.storage_state_path
             context = await browser.new_context(**context_options)
-            await context.add_cookies([self._build_session_cookie(session_cookie)])
+            await context.add_cookies(session_auth["browser_cookies"])
             page = await context.new_page()
             self._attach_page_request_logger(page)
 
@@ -292,40 +295,146 @@ class ChatGptClient(AbstractClient):
                 await context.close()
 
     def _load_session_cookie(self) -> str:
-        """Carica il cookie di sessione da variabile ambiente."""
         cookie_value = (self.session_cookie or "").strip()
         if cookie_value:
             return cookie_value
 
         if os.path.exists(self.cookie_path):
-            cookie_value = self._read_text_file(self.cookie_path)
-            if cookie_value:
-                return cookie_value
+            persisted_auth = self._read_persisted_session_auth()
+            if persisted_auth:
+                return persisted_auth["joined_value"]
 
         raise ValueError("CHATGPT_SESSION_COOKIE mancante o vuoto")
 
     def _resolve_session_cookie_from_login_content(self, content: str) -> str:
+        return self._resolve_session_auth_from_login_content(content)["joined_value"]
+
+    def _resolve_session_auth_from_login_content(self, content: str) -> dict[str, Any]:
         parsed = AuthPayloadParser.parse(content)
-        for cookie in parsed.cookies:
-            if cookie.get("name") == "__Secure-next-auth.session-token":
-                return str(cookie["value"])
+        session_cookies = self._extract_session_cookies(parsed.cookies)
+        if session_cookies:
+            return self._create_session_auth_from_cookies(session_cookies)
 
         cookie_value = parsed.raw_text.strip()
         if not cookie_value:
             raise ValueError("Cookie ChatGPT '__Secure-next-auth.session-token' mancante")
-        return cookie_value
+        return self._create_session_auth_from_token(cookie_value)
+
+    def _load_session_auth(self, optional: bool = False) -> Optional[dict[str, Any]]:
+        cookie_value = (self.session_cookie or "").strip()
+        if cookie_value:
+            return self._create_session_auth_from_token(cookie_value)
+
+        if self.session_cookie_chunks:
+            return self._create_session_auth_from_chunk_values(self.session_cookie_chunks)
+
+        if os.path.exists(self.cookie_path):
+            persisted_auth = self._read_persisted_session_auth()
+            if persisted_auth:
+                return persisted_auth
+
+        if optional:
+            return None
+        raise ValueError("CHATGPT_SESSION_COOKIE mancante o vuoto")
+
+    def _read_persisted_session_auth(self) -> Optional[dict[str, Any]]:
+        raw_content = self._read_text_file(self.cookie_path)
+        if not raw_content:
+            return None
+
+        if raw_content.startswith("{"):
+            try:
+                persisted = json.loads(raw_content)
+            except json.JSONDecodeError:
+                return self._create_session_auth_from_token(raw_content)
+            cookies = persisted.get("cookies") if isinstance(persisted, dict) else None
+            if isinstance(cookies, list):
+                return self._create_session_auth_from_cookies(cookies)
+
+        return self._create_session_auth_from_token(raw_content)
+
+    def _persist_session_auth(self, session_auth: dict[str, Any]) -> None:
+        if session_auth.get("is_chunked"):
+            self._write_json_file(self.cookie_path, {"cookies": session_auth["browser_cookies"]})
+            return
+        self._write_text_file(self.cookie_path, session_auth["joined_value"])
 
     @staticmethod
-    def _build_session_cookie(session_cookie: str) -> dict:
+    def _build_session_cookie(name: str, value: str) -> dict[str, Any]:
         return {
-            "name": "__Secure-next-auth.session-token",
-            "value": session_cookie,
+            "name": name,
+            "value": value,
             "domain": "chatgpt.com",
             "path": "/",
             "httpOnly": True,
             "secure": True,
             "sameSite": "None",
         }
+
+    @classmethod
+    def _create_session_auth_from_token(cls, cookie_value: str) -> dict[str, Any]:
+        browser_cookies = [cls._build_session_cookie("__Secure-next-auth.session-token", cookie_value)]
+        return {
+            "is_chunked": False,
+            "joined_value": cookie_value,
+            "browser_cookies": browser_cookies,
+            "cookie_header": cls._build_cookie_header(browser_cookies),
+        }
+
+    @classmethod
+    def _create_session_auth_from_chunk_values(cls, chunk_values: list[str]) -> dict[str, Any]:
+        normalized_values = []
+        for index, value in enumerate(chunk_values):
+            normalized_value = str(value).strip()
+            if not normalized_value:
+                raise ValueError(f"CHATGPT_SESSION_COOKIE_{index} mancante o vuoto")
+            normalized_values.append(normalized_value)
+
+        browser_cookies = [
+            cls._build_session_cookie(f"__Secure-next-auth.session-token.{index}", value)
+            for index, value in enumerate(normalized_values)
+        ]
+        return {
+            "is_chunked": True,
+            "joined_value": "".join(normalized_values),
+            "browser_cookies": browser_cookies,
+            "cookie_header": cls._build_cookie_header(browser_cookies),
+        }
+
+    @classmethod
+    def _create_session_auth_from_cookies(cls, cookies: list[dict[str, Any]]) -> dict[str, Any]:
+        chunk_values: list[str] = []
+        single_value = ""
+        for cookie in cookies:
+            name = str(cookie.get("name", "")).strip()
+            if name == "__Secure-next-auth.session-token":
+                single_value = str(cookie.get("value", ""))
+            elif name.startswith("__Secure-next-auth.session-token."):
+                suffix = name.rsplit(".", 1)[-1]
+                if suffix.isdigit():
+                    index = int(suffix)
+                    while len(chunk_values) <= index:
+                        chunk_values.append("")
+                    chunk_values[index] = str(cookie.get("value", ""))
+
+        if single_value:
+            return cls._create_session_auth_from_token(single_value)
+        if chunk_values:
+            return cls._create_session_auth_from_chunk_values(chunk_values)
+        raise ValueError("Cookie ChatGPT '__Secure-next-auth.session-token' mancante")
+
+    @staticmethod
+    def _extract_session_cookies(cookies: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        session_cookies = []
+        for cookie in cookies:
+            name = str(cookie.get("name", "")).strip()
+            if name == "__Secure-next-auth.session-token" or name.startswith("__Secure-next-auth.session-token."):
+                session_cookies.append(cookie)
+        return session_cookies
+
+    @staticmethod
+    def _build_cookie_header(cookies: list[dict[str, Any]]) -> str:
+        return "; ".join(f"{cookie['name']}={cookie['value']}" for cookie in cookies)
 
     async def _select_workspace_by_name(self, page, workspace_name: str) -> None:
         target_name = " ".join(workspace_name.strip().lower().split())
@@ -475,7 +584,7 @@ class ChatGptClient(AbstractClient):
         logger.info("Clicked 'Skip' in apps-at-work onboarding")
         return True
 
-    async def _fetch_conversation_via_browser(self, chat_id: str, session_cookie: str) -> dict:
+    async def _fetch_conversation_via_browser(self, chat_id: str, session_auth: dict[str, Any]) -> dict:
         constraints = Screen(max_width=1920, max_height=1080)
 
         async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
@@ -483,7 +592,7 @@ class ChatGptClient(AbstractClient):
             if os.path.exists(self.storage_state_path):
                 context_options["storage_state"] = self.storage_state_path
             context = await browser.new_context(**context_options)
-            await context.add_cookies([self._build_session_cookie(session_cookie)])
+            await context.add_cookies(session_auth["browser_cookies"])
             page = await context.new_page()
             self._attach_page_request_logger(page)
             conversation_payload = await self._fetch_conversation_via_page(page, chat_id)
@@ -651,9 +760,9 @@ class ChatGptClient(AbstractClient):
         if not download_url.startswith("https://chatgpt.com/"):
             raise ValueError("download_url non valida: deve iniziare con https://chatgpt.com/")
 
-        session_cookie = self._load_session_cookie()
+        session_auth = self._load_session_auth()
         headers = {
-            "Cookie": f"__Secure-next-auth.session-token={session_cookie}",
+            "Cookie": session_auth["cookie_header"],
             "User-Agent": (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -671,7 +780,7 @@ class ChatGptClient(AbstractClient):
             return content, status_code, content_type, content_disposition
 
     @staticmethod
-    def _auth_headers(session_cookie: str, account_id: str = "") -> dict:
+    def _auth_headers(session_cookie: str, cookie_header: str = "", account_id: str = "") -> dict:
         headers = {
             "accept": "*/*",
             "authorization": f"Bearer {session_cookie}",
@@ -681,6 +790,8 @@ class ChatGptClient(AbstractClient):
                 "Chrome/144.0.0.0 Safari/537.36"
             ),
         }
+        if cookie_header:
+            headers["cookie"] = cookie_header
         return headers
 
     @staticmethod

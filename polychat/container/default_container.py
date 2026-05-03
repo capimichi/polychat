@@ -76,12 +76,29 @@ class DefaultContainer:
         self.headless = self._parse_headless_mode(os.environ.get('HEADLESS', 'true'))
         self.perplexity_session_cookie = os.environ.get('PERPLEXITY_SESSION_COOKIE', '')
         self.chatgpt_session_cookie = os.environ.get('CHATGPT_SESSION_COOKIE', '')
+        self.chatgpt_session_cookie_chunks = self._read_numbered_environment_values('CHATGPT_SESSION_COOKIE_')
         self.chatgpt_workspace_name = os.environ.get('CHATGPT_WORKSPACE_NAME', '').strip()
         self.kimi_auth_token = os.environ.get('KIMI_AUTH_TOKEN', '')
         self.qwen_session_cookie = os.environ.get('QWEN_SESSION_COOKIE', '')
         self.gemini_cookie_1psid = os.environ.get('GEMINI_COOKIE_1PSID', '')
         self.gemini_cookie_1psidts = os.environ.get('GEMINI_COOKIE_1PSIDTS', '')
         self.deepseek_user_token_json = os.environ.get('DEEPSEEK_USER_TOKEN_JSON', '')
+
+    @staticmethod
+    def _read_numbered_environment_values(prefix: str) -> list[str]:
+        indexed_keys = []
+        for key in os.environ:
+            if not key.startswith(prefix):
+                continue
+            suffix = key[len(prefix):]
+            if suffix.isdigit():
+                indexed_keys.append(int(suffix))
+
+        if not indexed_keys:
+            return []
+
+        max_index = max(indexed_keys)
+        return [os.environ.get(f'{prefix}{index}', '') for index in range(max_index + 1)]
 
     @staticmethod
     def _parse_headless_mode(value: str | None) -> bool | Literal["virtual"]:
@@ -122,6 +139,7 @@ class DefaultContainer:
             self.session_dir,
             self.headless,
             self.chatgpt_session_cookie,
+            self.chatgpt_session_cookie_chunks,
             self.chatgpt_workspace_name,
         )
         self.injector.binder.bind(ChatGptClient, to=chatgpt_client)

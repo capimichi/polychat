@@ -10,6 +10,8 @@ from polychat.container.default_container import DefaultContainer
 
 def test_init_environment_variables_reads_chatgpt_env(monkeypatch):
     monkeypatch.setenv("CHATGPT_SESSION_COOKIE", "cookie-123")
+    monkeypatch.setenv("CHATGPT_SESSION_COOKIE_0", "chunk-0")
+    monkeypatch.setenv("CHATGPT_SESSION_COOKIE_1", "chunk-1")
     monkeypatch.setenv("CHATGPT_WORKSPACE_NAME", "  Team Workspace  ")
     monkeypatch.setenv("KIMI_AUTH_TOKEN", "kimi-token")
     monkeypatch.setenv("QWEN_SESSION_COOKIE", "qwen-cookie")
@@ -21,6 +23,7 @@ def test_init_environment_variables_reads_chatgpt_env(monkeypatch):
     container._init_environment_variables()
 
     assert container.chatgpt_session_cookie == "cookie-123"
+    assert container.chatgpt_session_cookie_chunks == ["chunk-0", "chunk-1"]
     assert container.chatgpt_workspace_name == "Team Workspace"
     assert container.kimi_auth_token == "kimi-token"
     assert container.qwen_session_cookie == "qwen-cookie"
@@ -33,6 +36,8 @@ def test_default_container_passes_chatgpt_env_to_client(monkeypatch):
     DefaultContainer.instance = None
 
     monkeypatch.setenv("CHATGPT_SESSION_COOKIE", "cookie-from-env")
+    monkeypatch.setenv("CHATGPT_SESSION_COOKIE_0", "chunk-0")
+    monkeypatch.setenv("CHATGPT_SESSION_COOKIE_1", "chunk-1")
     monkeypatch.setenv("CHATGPT_WORKSPACE_NAME", "My Workspace")
     monkeypatch.setenv("KIMI_AUTH_TOKEN", "kimi-from-env")
     monkeypatch.setenv("QWEN_SESSION_COOKIE", "qwen-from-env")
@@ -48,6 +53,7 @@ def test_default_container_passes_chatgpt_env_to_client(monkeypatch):
     deepseek_client = container.get(DeepseekClient)
 
     assert client.session_cookie == "cookie-from-env"
+    assert client.session_cookie_chunks == ["chunk-0", "chunk-1"]
     assert client.workspace_name == "My Workspace"
     assert kimi_client.auth_token == "kimi-from-env"
     assert qwen_client.session_cookie == "qwen-from-env"
