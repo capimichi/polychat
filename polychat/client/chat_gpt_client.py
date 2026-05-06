@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 
 class ChatGptClient(AbstractClient):
+    CHATGPT_NAVIGATION_TIMEOUT_MS = 12_000
+    CHATGPT_NAVIGATION_RETRY_ATTEMPTS = 3
     CHAT_LIST_URL = (
         "https://chatgpt.com/backend-api/conversations?"
         "offset={offset}&limit={limit}&order=updated&is_archived=false&"
@@ -163,7 +165,6 @@ class ChatGptClient(AbstractClient):
 
         async def _attempt() -> ChatGptAskResult:
             constraints = Screen(max_width=1920, max_height=1080)
-            current_url = ""
             logger.info("ChatGPT ask started (chat_id=%s, workspace=%s)", chat_id, self.workspace_name or "<none>")
             async with AsyncCamoufox(
                 headless=self.headless,
@@ -178,71 +179,7 @@ class ChatGptClient(AbstractClient):
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
 
-                url = f"https://chatgpt.com/c/{chat_id}" if chat_id else "https://chatgpt.com/"
-                logger.info("Opening ChatGPT page: %s", url)
-                await self._goto(page, url, wait_until="domcontentloaded", timeout=12_000)
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=4_000)
-                except Exception:
-                    logger.info("Network idle not reached quickly; continuing anyway")
-                await page.wait_for_timeout(self.POST_NAVIGATION_WAIT_MS)
-                await self._ensure_workspace_active(page)
-
-                if self.workspace_name:
-                    logger.info("Workspace configured; selecting workspace by name: %s", self.workspace_name)
-                    await self._select_workspace_by_name(page, self.workspace_name)
-                    await page.wait_for_timeout(self.POST_RECOVERY_WAIT_MS)
-                    try:
-                        await context.storage_state(path=self.storage_state_path)
-                    except Exception as exc:
-                        logger.warning("Unable to persist ChatGPT storage state: %s", exc)
-
-                await self._focus_prompt_input(page)
-
-                if type_input:
-                    logger.info("Typing prompt content in textarea")
-                    try:
-                        await self._type_into_focused_input(page, message)
-                    except Exception:
-                        await self._ensure_workspace_active(page)
-                        await self._focus_prompt_input(page)
-                        try:
-                            await self._type_into_focused_input(page, message)
-                        except Exception as retry_exc:
-                            screenshot_path = await self._capture_debug_screenshot(page, "input-interaction")
-                            raise RuntimeError(
-                                f"Errore durante interazione con input '{self.PROMPT_SELECTOR}'. "
-                                f"Screenshot creato: {screenshot_path}."
-                            ) from retry_exc
-                else:
-                    logger.info("Pasting prompt content in textarea")
-                    try:
-                        await self._paste_into_focused_input(page, message)
-                    except Exception:
-                        await self._ensure_workspace_active(page)
-                        await self._focus_prompt_input(page)
-                        try:
-                            await self._paste_into_focused_input(page, message)
-                        except Exception as retry_exc:
-                            screenshot_path = await self._capture_debug_screenshot(page, "input-interaction")
-                            raise RuntimeError(
-                                f"Errore durante interazione con input '{self.PROMPT_SELECTOR}'. "
-                                f"Screenshot creato: {screenshot_path}."
-                            ) from retry_exc
-
-                await page.keyboard.press("Enter")
-                logger.info("Prompt submitted; waiting for conversation URL")
-
-                try:
-                    await page.wait_for_url("**/c/**", timeout=self.WAIT_FOR_URL_TIMEOUT_MS)
-                except Exception:
-                    logger.info("Conversation URL not detected within timeout; continuing")
-
-                logger.info("Waiting %sms before closing page after submit", self.POST_SUBMIT_WAIT_MS)
-                await page.wait_for_timeout(self.POST_SUBMIT_WAIT_MS)
-
-                current_url = page.url
-                logger.info("Current page URL after submit: %s", current_url)
+                resolved_chat_id = await self._submit_prompt(page, message, chat_id, type_input)
 
                 try:
                     await page.close()
@@ -250,9 +187,8 @@ class ChatGptClient(AbstractClient):
                 except Exception as exc:
                     logger.warning("Error while closing ChatGPT page/context: %s", exc)
 
-            slug = self._extract_slug_from_url(current_url if 'current_url' in locals() else url)
-            logger.info("ChatGPT ask completed (chat_id=%s)", slug)
-            return ChatGptAskResult(chat_id=slug, message="")
+            logger.info("ChatGPT ask completed (chat_id=%s)", resolved_chat_id)
+            return ChatGptAskResult(chat_id=resolved_chat_id, message="")
 
         return await _attempt()
 
@@ -616,8 +552,7 @@ class ChatGptClient(AbstractClient):
         type_input: bool,
     ) -> str:
         url = f"https://chatgpt.com/c/{chat_id}" if chat_id else "https://chatgpt.com/"
-        logger.info("Opening ChatGPT page: %s", url)
-        await self._goto(page, url, wait_until="domcontentloaded", timeout=12_000)
+        await self._open_chatgpt_page(page, url)
         try:
             await page.wait_for_load_state("networkidle", timeout=4_000)
         except Exception:
@@ -680,6 +615,36 @@ class ChatGptClient(AbstractClient):
         slug = self._extract_slug_from_url(current_url if current_url else url)
         logger.info("ChatGPT submit completed (chat_id=%s)", slug)
         return slug
+
+    async def _open_chatgpt_page(self, page, url: str, timeout: Optional[int] = None) -> None:  # noqa: ANN001
+        navigation_timeout = timeout or self.CHATGPT_NAVIGATION_TIMEOUT_MS
+
+        async def _navigate() -> None:
+            logger.info("Opening ChatGPT page: %s", url)
+            await self._goto(page, url, wait_until="domcontentloaded", timeout=navigation_timeout)
+
+        async def _navigate_with_logging() -> None:
+            for attempt in range(1, self.CHATGPT_NAVIGATION_RETRY_ATTEMPTS + 1):
+                try:
+                    logger.info(
+                        "ChatGPT page navigation attempt %s/%s: %s",
+                        attempt,
+                        self.CHATGPT_NAVIGATION_RETRY_ATTEMPTS,
+                        url,
+                    )
+                    await _navigate()
+                    return
+                except Exception:
+                    if attempt == self.CHATGPT_NAVIGATION_RETRY_ATTEMPTS:
+                        raise
+                    logger.warning(
+                        "ChatGPT page navigation attempt %s/%s failed; retrying: %s",
+                        attempt,
+                        self.CHATGPT_NAVIGATION_RETRY_ATTEMPTS,
+                        url,
+                    )
+
+        await _navigate_with_logging()
 
     async def _fetch_conversation_via_page(self, page, chat_id: str) -> dict:  # noqa: ANN001
         conversation_url = f"https://chatgpt.com/backend-api/conversation/{chat_id}"
@@ -766,12 +731,12 @@ class ChatGptClient(AbstractClient):
         ) as conversation_response_info:
             if use_reload:
                 try:
-                    await self._goto(page, url, wait_until="domcontentloaded", timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
+                    await self._open_chatgpt_page(page, url, timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
                     await page.wait_for_load_state("domcontentloaded", timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
                 except Exception:
                     logger.info("Conversation page goto retry did not reach domcontentloaded quickly; continuing")
             else:
-                await self._goto(page, url, wait_until="domcontentloaded", timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
+                await self._open_chatgpt_page(page, url, timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
                 try:
                     await page.wait_for_load_state("domcontentloaded", timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
                 except Exception:

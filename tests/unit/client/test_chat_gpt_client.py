@@ -22,11 +22,13 @@ class _FakePage:
         self.url = "https://chatgpt.com/c/test-conversation"
         self.keyboard = _FakeKeyboard()
         self.waited_timeouts = []
+        self.goto_urls = []
 
     async def goto(self, _url: str, **_kwargs) -> None:
+        self.goto_urls.append(_url)
         return None
 
-    async def wait_for_load_state(self, _state: str) -> None:
+    async def wait_for_load_state(self, _state: str, timeout: int | None = None) -> None:
         return None
 
     async def wait_for_timeout(self, _timeout: int) -> None:
@@ -308,6 +310,26 @@ class _ConversationFetchPageWithSequentialResponses(_ConversationFetchPage):
         return _FakeExpectResponse(response)
 
 
+class _ConversationFetchPageWithFailingGotoThenSuccess(_ConversationFetchPage):
+    def __init__(self, response: _FakeResponse, failures_before_success: int):
+        super().__init__(response)
+        self.failures_before_success = failures_before_success
+
+    async def goto(self, _url: str, **_kwargs) -> None:
+        self.goto_calls += 1
+        self.goto_urls.append(_url)
+        if self.goto_calls <= self.failures_before_success:
+            raise TimeoutError("goto timeout")
+        return None
+
+
+class _ConversationFetchPageAlwaysFailingGoto(_ConversationFetchPage):
+    async def goto(self, _url: str, **_kwargs) -> None:
+        self.goto_calls += 1
+        self.goto_urls.append(_url)
+        raise TimeoutError("goto timeout")
+
+
 @pytest.mark.asyncio
 async def test_ask_raises_when_session_cookie_is_missing(tmp_path):
     client = ChatGptClient(str(tmp_path), session_cookie=" ")
@@ -518,6 +540,40 @@ async def test_ask_waits_five_seconds_after_submit_before_close(tmp_path, monkey
 
 
 @pytest.mark.asyncio
+async def test_ask_retries_chatgpt_navigation_three_times(tmp_path, monkeypatch):
+    client = ChatGptClient(str(tmp_path), session_cookie="cookie", workspace_name="")
+    page = _FakePage()
+    failures = 0
+
+    async def _failing_goto(_page, url: str, **kwargs):
+        nonlocal failures
+        page.goto_urls.append(url)
+        failures += 1
+        if failures < 3:
+            raise TimeoutError("goto timeout")
+        return None
+
+    class _TrackingAsyncCamoufox:
+        def __init__(self, **_kwargs):
+            self._browser = _FakeBrowser(page)
+
+        async def __aenter__(self) -> _FakeBrowser:
+            return self._browser
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("polychat.client.chat_gpt_client.AsyncCamoufox", _TrackingAsyncCamoufox)
+    monkeypatch.setattr(client, "_goto", _failing_goto)
+
+    result = await client.ask("hello")
+
+    assert result.chat_id == "test-conversation"
+    assert failures == 3
+    assert page.goto_urls == ["https://chatgpt.com/", "https://chatgpt.com/", "https://chatgpt.com/"]
+
+
+@pytest.mark.asyncio
 async def test_select_workspace_by_name_clicks_matching_workspace(tmp_path):
     client = ChatGptClient(str(tmp_path), session_cookie="cookie", workspace_name="Team Alpha")
     candidate = _FakeElement("  TEAM   alpha ")
@@ -624,6 +680,37 @@ async def test_fetch_conversation_via_page_awaits_conversation_response(tmp_path
     assert page.goto_calls == 1
     assert page.goto_urls == ["https://chatgpt.com/c/chat-123"]
     assert ChatGptClient.IMAGE_DOWNLOAD_GRACE_PERIOD_MS in page.waited_timeouts
+
+
+@pytest.mark.asyncio
+async def test_fetch_conversation_via_page_retries_navigation_three_times(tmp_path):
+    client = ChatGptClient(str(tmp_path), session_cookie="cookie")
+    payload = {"conversation_id": "chat-123", "mapping": {}, "current_node": None}
+    response = _FakeResponse("https://chatgpt.com/backend-api/conversation/chat-123", payload)
+    page = _ConversationFetchPageWithFailingGotoThenSuccess(response, failures_before_success=2)
+
+    result = await client._fetch_conversation_via_page(page, "chat-123")
+
+    assert result == payload
+    assert page.goto_calls == 3
+    assert page.goto_urls == [
+        "https://chatgpt.com/c/chat-123",
+        "https://chatgpt.com/c/chat-123",
+        "https://chatgpt.com/c/chat-123",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fetch_conversation_via_page_raises_after_navigation_retry_exhausted(tmp_path):
+    client = ChatGptClient(str(tmp_path), session_cookie="cookie")
+    payload = {"conversation_id": "chat-123", "mapping": {}, "current_node": None}
+    response = _FakeResponse("https://chatgpt.com/backend-api/conversation/chat-123", payload)
+    page = _ConversationFetchPageAlwaysFailingGoto(response)
+
+    with pytest.raises(TimeoutError, match="goto timeout"):
+        await client._fetch_conversation_via_page(page, "chat-123")
+
+    assert page.goto_calls == ChatGptClient.CHATGPT_NAVIGATION_RETRY_ATTEMPTS
 
 
 @pytest.mark.asyncio
