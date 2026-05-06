@@ -1,11 +1,12 @@
 import asyncio
 import os
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from urllib.parse import urlparse
 
 from browserforge.fingerprints import Screen
 from camoufox.async_api import AsyncCamoufox
 from injector import inject
+from strip_tags import strip_tags
 
 from polychat.client.abstract_client import AbstractClient
 from polychat.model.client.kimi_response import KimiResponse
@@ -24,30 +25,37 @@ class KimiClient(AbstractClient):
         self,
         session_dir: str,
         headless: bool | Literal["virtual"] = False,
-        auth_token: str = "",
+        access_token: str = "",
+        refresh_token: str = "",
     ):
         super().__init__()
         self.session_dir = os.path.join(session_dir, "kimi")
         self.storage_state_path = os.path.join(self.session_dir, "kimi_state.json")
-        self.auth_token_path = os.path.join(self.session_dir, "kimi_auth_token.txt")
+        self.tokens_path = os.path.join(self.session_dir, "kimi_tokens.json")
         self.headless = headless
-        self.auth_token = auth_token
+        self.access_token = access_token
+        self.refresh_token = refresh_token
         os.makedirs(self.session_dir, exist_ok=True)
 
     async def login(self, content: str) -> None:
-        """Inietta il cookie di auth Kimi e salva lo stato della sessione."""
+        """Imposta i token Kimi in localStorage e salva lo stato della sessione."""
         os.makedirs(self.session_dir, exist_ok=True)
         constraints = Screen(max_width=1920, max_height=1080)
-        auth_token = self._resolve_auth_token_from_login_content(content)
-        self._write_text_file(self.auth_token_path, auth_token)
+        access_token, refresh_token = self._resolve_auth_tokens_from_login_content(content)
+        self._write_json_file(
+            self.tokens_path,
+            {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+            },
+        )
         async with AsyncCamoufox(headless=self.headless, humanize=True, screen=constraints) as browser:
             context = await browser.new_context()
-            await context.add_cookies([self._build_auth_cookie(auth_token)])
             page = await context.new_page()
             self._attach_page_request_logger(page)
 
-            await self._goto(page, self.BASE_URL)
-            await asyncio.sleep(2)
+            await self._bootstrap_authenticated_page(page, self.BASE_URL, access_token, refresh_token)
+            await page.wait_for_timeout(2_000)
 
             await context.storage_state(path=self.storage_state_path)
 
@@ -65,33 +73,23 @@ class KimiClient(AbstractClient):
                 humanize=True,
                 screen=constraints
             ) as browser:
-                auth_token = self._load_auth_token()
+                access_token, refresh_token = self._load_auth_tokens()
                 context_options = {}
                 if os.path.exists(self.storage_state_path):
                     context_options["storage_state"] = self.storage_state_path
 
                 context = await browser.new_context(**context_options)
-                await context.add_cookies([self._build_auth_cookie(auth_token)])
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
 
-                url = f"{self.BASE_URL}chat/{chat_id}" if chat_id else self.BASE_URL
-                await self._goto(page, url)
-                if type_input:
-                    await self._type_message(page, ".chat-input", message)
-                else:
-                    await self._paste_message(page, ".chat-input", message)
-
-                await page.keyboard.press("Enter")
-
-                try:
-                    await page.wait_for_url("**/chat/**", timeout=12_000)
-                except Exception:
-                    pass
-                await page.wait_for_timeout(1_000)
-                chat_id = self._extract_chat_id_from_url(page.url or "")
-                if not chat_id:
-                    raise ValueError("Chat ID Kimi non trovato nella URL dopo l'invio del messaggio")
+                chat_id = await self._submit_prompt(
+                    page,
+                    message,
+                    chat_id,
+                    type_input,
+                    access_token,
+                    refresh_token,
+                )
 
                 await page.close()
                 await context.close()
@@ -113,16 +111,20 @@ class KimiClient(AbstractClient):
                 humanize=True,
                 screen=constraints
             ) as browser:
-                auth_token = self._load_auth_token()
+                access_token, refresh_token = self._load_auth_tokens()
                 context_options = {}
                 if os.path.exists(self.storage_state_path):
                     context_options["storage_state"] = self.storage_state_path
 
                 context = await browser.new_context(**context_options)
-                await context.add_cookies([self._build_auth_cookie(auth_token)])
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
-                await self._goto(page, f"{self.BASE_URL}chat/{chat_id}")
+                await self._bootstrap_authenticated_page(
+                    page,
+                    f"{self.BASE_URL}chat/{chat_id}",
+                    access_token,
+                    refresh_token,
+                )
 
                 await asyncio.sleep(5)
 
@@ -154,7 +156,7 @@ class KimiClient(AbstractClient):
                 await page.close()
                 await context.close()
 
-            return KimiResponse(chat_id=chat_id, message=content_html)
+            return KimiResponse(chat_id=chat_id, message=self._clean_message_html(content_html))
 
         return await self._retry_async(_attempt, attempts=3)
 
@@ -172,18 +174,24 @@ class KimiClient(AbstractClient):
                 humanize=True,
                 screen=constraints
             ) as browser:
-                auth_token = self._load_auth_token()
+                access_token, refresh_token = self._load_auth_tokens()
                 context_options = {}
                 if os.path.exists(self.storage_state_path):
                     context_options["storage_state"] = self.storage_state_path
 
                 context = await browser.new_context(**context_options)
-                await context.add_cookies([self._build_auth_cookie(auth_token)])
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
 
                 try:
-                    resolved_chat_id = await self._submit_prompt(page, message, chat_id, type_input)
+                    resolved_chat_id = await self._submit_prompt(
+                        page,
+                        message,
+                        chat_id,
+                        type_input,
+                        access_token,
+                        refresh_token,
+                    )
                     await self._wait_for_network_to_settle(
                         page,
                         timeout_seconds=self.COMPLETE_WAIT_TIMEOUT_SECONDS,
@@ -194,7 +202,7 @@ class KimiClient(AbstractClient):
                     await page.close()
                     await context.close()
 
-                return KimiResponse(chat_id=resolved_chat_id, message=content)
+                return KimiResponse(chat_id=resolved_chat_id, message=self._clean_message_html(content))
 
         return await self._retry_async(_attempt, attempts=3)
 
@@ -203,22 +211,32 @@ class KimiClient(AbstractClient):
 
     async def status(self) -> dict:
         constraints = Screen(max_width=1920, max_height=1080)
+        user_name_text = ""
         try:
             async with AsyncCamoufox(
                 headless=self.headless,
                 humanize=True,
                 screen=constraints
             ) as browser:
-                auth_token = self._load_auth_token()
+                access_token, refresh_token = self._load_auth_tokens()
                 context_options = {}
                 if os.path.exists(self.storage_state_path):
                     context_options["storage_state"] = self.storage_state_path
                 context = await browser.new_context(**context_options)
-                await context.add_cookies([self._build_auth_cookie(auth_token)])
                 page = await context.new_page()
                 self._attach_page_request_logger(page)
-                await self._goto(page, self.BASE_URL, wait_until="domcontentloaded", timeout=20_000)
+                await self._bootstrap_authenticated_page(
+                    page,
+                    self.BASE_URL,
+                    access_token,
+                    refresh_token,
+                    wait_until="domcontentloaded",
+                    timeout=20_000,
+                )
                 await page.wait_for_timeout(1_500)
+                user_name = await page.query_selector(".user-name")
+                if user_name is not None:
+                    user_name_text = (await user_name.inner_text() or "").strip()
                 try:
                     await context.storage_state(path=self.storage_state_path)
                 except Exception:
@@ -230,47 +248,80 @@ class KimiClient(AbstractClient):
                 "provider": "kimi",
                 "is_available": False,
                 "is_logged_in": False,
-                "detail": f"TODO: implement Kimi login detection (status check failed: {exc})",
+                "detail": f"Kimi status check failed: {exc}",
             }
+
+        is_logged_in = self._is_logged_in_from_user_name_text(user_name_text)
+        if not user_name_text:
+            detail = "Kimi user-name element not found"
+        elif not is_logged_in:
+            detail = "Kimi login prompt detected"
+        else:
+            detail = None
 
         return {
             "provider": "kimi",
             "is_available": True,
-            "is_logged_in": False,
-            "detail": "TODO: implement Kimi login detection",
+            "is_logged_in": is_logged_in,
+            "detail": detail,
         }
-
-    def _load_auth_token(self) -> str:
-        auth_token = (self.auth_token or "").strip()
-        if auth_token:
-            return auth_token
-        if os.path.exists(self.auth_token_path):
-            auth_token = self._read_text_file(self.auth_token_path)
-            if auth_token:
-                return auth_token
-        raise ValueError("KIMI_AUTH_TOKEN mancante o vuoto")
-
-    def _resolve_auth_token_from_login_content(self, content: str) -> str:
-        parsed = AuthPayloadParser.parse(content)
-        for cookie in parsed.cookies:
-            if cookie.get("name") == "kimi-auth":
-                return str(cookie["value"])
-        auth_token = parsed.raw_text.strip()
-        if not auth_token:
-            raise ValueError("Cookie Kimi 'kimi-auth' mancante")
-        return auth_token
 
     @staticmethod
-    def _build_auth_cookie(auth_token: str) -> dict:
-        return {
-            "name": "kimi-auth",
-            "value": auth_token,
-            "domain": ".kimi.com",
-            "path": "/",
-            "httpOnly": True,
-            "secure": True,
-            "sameSite": "Lax",
-        }
+    def _is_logged_in_from_user_name_text(user_name_text: str) -> bool:
+        normalized_text = (user_name_text or "").strip()
+        return normalized_text != "" and normalized_text != "Log In"
+
+    def _load_auth_tokens(self) -> tuple[str, str]:
+        access_token = (self.access_token or "").strip()
+        refresh_token = (self.refresh_token or "").strip()
+        if access_token or refresh_token:
+            return self._validate_auth_tokens(
+                {
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                }
+            )
+
+        if os.path.exists(self.tokens_path):
+            return self._validate_auth_tokens(self._read_json_file(self.tokens_path))
+
+        raise ValueError("KIMI_ACCESS_TOKEN o KIMI_REFRESH_TOKEN mancante o vuoto")
+
+    def _resolve_auth_tokens_from_login_content(self, content: str) -> tuple[str, str]:
+        parsed = AuthPayloadParser.parse(content)
+        if not isinstance(parsed.raw_json_value, dict):
+            raise ValueError("Kimi login payload deve essere un JSON con access_token e refresh_token")
+        return self._validate_auth_tokens(parsed.raw_json_value)
+
+    @staticmethod
+    def _validate_auth_tokens(payload: dict[str, Any]) -> tuple[str, str]:
+        access_token = str(payload.get("access_token", "")).strip()
+        refresh_token = str(payload.get("refresh_token", "")).strip()
+        if not access_token or not refresh_token:
+            raise ValueError("KIMI_ACCESS_TOKEN e KIMI_REFRESH_TOKEN devono essere entrambi valorizzati")
+        return access_token, refresh_token
+
+    async def _bootstrap_authenticated_page(
+        self,
+        page,
+        url: str,
+        access_token: str,
+        refresh_token: str,
+        wait_until: str = "load",
+        timeout: int = 30_000,
+    ) -> None:  # noqa: ANN001
+        await self._goto(page, url, wait_until=wait_until, timeout=timeout)
+        await self._set_auth_tokens(page, access_token, refresh_token)
+        await self._goto(page, url, wait_until=wait_until, timeout=timeout)
+
+    async def _set_auth_tokens(self, page, access_token: str, refresh_token: str) -> None:  # noqa: ANN001
+        await page.evaluate(
+            """([accessToken, refreshToken]) => {
+                window.localStorage.setItem('access_token', accessToken);
+                window.localStorage.setItem('refresh_token', refreshToken);
+            }""",
+            [access_token, refresh_token],
+        )
 
     @staticmethod
     def _extract_chat_id_from_url(url: str) -> str:
@@ -293,9 +344,13 @@ class KimiClient(AbstractClient):
         message: str,
         chat_id: Optional[str],
         type_input: bool,
+        access_token: str,
+        refresh_token: str,
     ) -> str:
         url = f"{self.BASE_URL}chat/{chat_id}" if chat_id else self.BASE_URL
-        await self._goto(page, url)
+        await self._bootstrap_authenticated_page(page, url, access_token, refresh_token)
+        await page.wait_for_timeout(5_000)
+        await self._dismiss_later_dialog_if_present(page)
         if type_input:
             await self._type_message(page, ".chat-input", message)
         else:
@@ -312,6 +367,17 @@ class KimiClient(AbstractClient):
         if not resolved_chat_id:
             raise ValueError("Chat ID Kimi non trovato nella URL dopo l'invio del messaggio")
         return resolved_chat_id
+
+    async def _dismiss_later_dialog_if_present(self, page) -> None:  # noqa: ANN001
+        buttons = await page.query_selector_all(".common-dialog-button")
+        for button in buttons:
+            text = " ".join(((await button.inner_text()) or "").lower().split())
+            if "later" not in text:
+                continue
+
+            await button.click()
+            await page.wait_for_timeout(500)
+            return
 
     async def _read_last_message_html(self, page) -> str:  # noqa: ANN001
         content_html = ""
@@ -341,3 +407,10 @@ class KimiClient(AbstractClient):
             break
 
         return content_html
+
+    @staticmethod
+    def _clean_message_html(content: str) -> str:
+        if not content:
+            return ""
+        stripped = strip_tags(content, minify=True, remove_blank_lines=True)
+        return " ".join(stripped.split())

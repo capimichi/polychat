@@ -78,7 +78,8 @@ class DefaultContainer:
         self.chatgpt_session_cookie = os.environ.get('CHATGPT_SESSION_COOKIE', '')
         self.chatgpt_session_cookie_chunks = self._read_numbered_environment_values('CHATGPT_SESSION_COOKIE_')
         self.chatgpt_workspace_name = os.environ.get('CHATGPT_WORKSPACE_NAME', '').strip()
-        self.kimi_auth_token = os.environ.get('KIMI_AUTH_TOKEN', '')
+        self.kimi_access_token = os.environ.get('KIMI_ACCESS_TOKEN', '')
+        self.kimi_refresh_token = os.environ.get('KIMI_REFRESH_TOKEN', '')
         self.qwen_session_cookie = os.environ.get('QWEN_SESSION_COOKIE', '')
         self.gemini_cookie_1psid = os.environ.get('GEMINI_COOKIE_1PSID', '')
         self.gemini_cookie_1psidts = os.environ.get('GEMINI_COOKIE_1PSIDTS', '')
@@ -158,7 +159,8 @@ class DefaultContainer:
         kimi_client = KimiClient(
             self.session_dir,
             self.headless,
-            self.kimi_auth_token,
+            self.kimi_access_token,
+            self.kimi_refresh_token,
         )
         self.injector.binder.bind(KimiClient, to=kimi_client)
 
