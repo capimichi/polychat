@@ -15,6 +15,8 @@ class PerplexityClient(AbstractClient):
     SESSION_RESPONSE_TIMEOUT_MS = 5_000
     COMPLETE_WAIT_TIMEOUT_SECONDS = 60.0
     COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 2.0
+    THREAD_COMPLETION_TIMEOUT_SECONDS = 90.0
+    THREAD_COMPLETION_POLL_INTERVAL_MS = 5_000
 
     @inject
     def __init__(
@@ -276,39 +278,58 @@ class PerplexityClient(AbstractClient):
 
     async def _wait_for_thread_response(self, page, slug: str, post_navigation_wait_ms: int = 0) -> PerplexityResponse:
         """
-        Attende la response AJAX /rest/thread/{slug} e valida l'ultima entry.
+        Attende la response AJAX /rest/thread/{slug} finche' l'ultima entry non e' COMPLETED.
         """
-        response_content = None
-        response_received = asyncio.Event()
         thread_path = f"/rest/thread/{slug}"
+        thread_url = f"https://www.perplexity.ai/search/{slug}"
+        deadline = asyncio.get_running_loop().time() + self.THREAD_COMPLETION_TIMEOUT_SECONDS
 
-        async def handle_response(response):  # noqa: ANN001
-            nonlocal response_content
-            if thread_path in response.url:
-                try:
-                    payload = await response.json()
-                    entries = payload.get("entries") if isinstance(payload, dict) else None
-                    if not entries:
-                        return
-                    last_entry = entries[-1]
-                    if not isinstance(last_entry, dict):
-                        return
-                    response_content = last_entry
-                    response_received.set()
-                except Exception as e:
-                    print(f"Error reading response: {e}")
+        while True:
+            remaining_seconds = deadline - asyncio.get_running_loop().time()
+            if remaining_seconds <= 0:
+                raise Exception("Timeout waiting for Perplexity thread completion")
 
-        page.on("response", handle_response)
-        await self._goto(page, f"https://www.perplexity.ai/search/{slug}")
-        if post_navigation_wait_ms > 0:
-            await page.wait_for_timeout(post_navigation_wait_ms)
+            response_content = await self._fetch_thread_entry(
+                page,
+                thread_url,
+                thread_path,
+                timeout_seconds=remaining_seconds,
+                post_navigation_wait_ms=post_navigation_wait_ms,
+            )
+            post_navigation_wait_ms = 0
 
-        try:
-            await asyncio.wait_for(response_received.wait(), timeout=120)
-        except asyncio.TimeoutError:
-            raise Exception("Timeout waiting for Perplexity thread response")
+            if response_content.get("status") == "COMPLETED":
+                return PerplexityResponse.model_validate(response_content)
 
-        return PerplexityResponse.model_validate(response_content)
+            await page.wait_for_timeout(self.THREAD_COMPLETION_POLL_INTERVAL_MS)
+
+    async def _fetch_thread_entry(
+        self,
+        page,
+        thread_url: str,
+        thread_path: str,
+        timeout_seconds: float,
+        post_navigation_wait_ms: int = 0,
+    ) -> dict[str, Any]:
+        async with page.expect_response(
+            lambda response: thread_path in response.url,
+            timeout=max(1, int(timeout_seconds * 1000)),
+        ) as thread_response_info:
+            await self._goto(page, thread_url)
+            if post_navigation_wait_ms > 0:
+                await page.wait_for_timeout(post_navigation_wait_ms)
+
+        response = await thread_response_info.value
+        payload = await response.json()
+        entries = payload.get("entries") if isinstance(payload, dict) else None
+        if not entries:
+            raise Exception("Perplexity thread response missing entries")
+
+        last_entry = entries[-1]
+        if not isinstance(last_entry, dict):
+            raise Exception("Perplexity thread response last entry is invalid")
+
+        return last_entry
 
     def _load_session_cookie(self) -> str:
         cookie_value = (self.session_cookie or "").strip()
