@@ -208,6 +208,8 @@ class _ConversationFetchPage:
         self.handlers = {}
         self.waited_timeouts = []
         self.reload_calls = 0
+        self.goto_calls = 0
+        self.goto_urls = []
 
     def on(self, event: str, handler) -> None:
         self.handlers[event] = handler
@@ -218,6 +220,8 @@ class _ConversationFetchPage:
         return _FakeExpectResponse(self._response)
 
     async def goto(self, _url: str, **_kwargs) -> None:
+        self.goto_calls += 1
+        self.goto_urls.append(_url)
         return None
 
     async def wait_for_load_state(self, _state: str, timeout: int | None = None) -> None:
@@ -288,6 +292,20 @@ class _ConversationFetchPageWithFailingReload(_ConversationFetchPage):
     async def reload(self, **_kwargs) -> None:
         self.reload_calls += 1
         raise TimeoutError("reload timeout")
+
+
+class _ConversationFetchPageWithSequentialResponses(_ConversationFetchPage):
+    def __init__(self, responses: list[_FakeResponse]):
+        super().__init__(responses[0])
+        self._responses = responses
+        self._response_index = 0
+
+    def expect_response(self, predicate, timeout: int):
+        assert timeout == ChatGptClient.CONVERSATION_FETCH_TIMEOUT_MS
+        response = self._responses[min(self._response_index, len(self._responses) - 1)]
+        self._response_index += 1
+        assert predicate(response) is True
+        return _FakeExpectResponse(response)
 
 
 @pytest.mark.asyncio
@@ -496,7 +514,7 @@ async def test_ask_waits_five_seconds_after_submit_before_close(tmp_path, monkey
 
     await client.ask("hello")
 
-    assert 5_000 in page.waited_timeouts
+    assert ChatGptClient.POST_SUBMIT_WAIT_MS in page.waited_timeouts
 
 
 @pytest.mark.asyncio
@@ -603,7 +621,49 @@ async def test_fetch_conversation_via_page_awaits_conversation_response(tmp_path
     result = await client._fetch_conversation_via_page(page, "chat-123")
 
     assert result == payload
+    assert page.goto_calls == 1
+    assert page.goto_urls == ["https://chatgpt.com/c/chat-123"]
     assert ChatGptClient.IMAGE_DOWNLOAD_GRACE_PERIOD_MS in page.waited_timeouts
+
+
+@pytest.mark.asyncio
+async def test_fetch_conversation_via_page_retries_while_async_status_is_set(tmp_path):
+    client = ChatGptClient(str(tmp_path), session_cookie="cookie")
+    responses = [
+        _FakeResponse(
+            "https://chatgpt.com/backend-api/conversation/chat-123",
+            {"conversation_id": "chat-123", "mapping": {}, "current_node": None, "async_status": "in_progress"},
+        ),
+        _FakeResponse(
+            "https://chatgpt.com/backend-api/conversation/chat-123",
+            {"conversation_id": "chat-123", "mapping": {}, "current_node": None, "async_status": None},
+        ),
+    ]
+    page = _ConversationFetchPageWithSequentialResponses(responses)
+
+    result = await client._fetch_conversation_via_page(page, "chat-123")
+
+    assert result["async_status"] is None
+    assert page.goto_calls == 2
+    assert page.goto_urls == ["https://chatgpt.com/c/chat-123", "https://chatgpt.com/c/chat-123"]
+    assert ChatGptClient.ASYNC_STATUS_POLL_INTERVAL_MS in page.waited_timeouts
+
+
+@pytest.mark.asyncio
+async def test_fetch_conversation_via_page_raises_after_async_status_timeout(tmp_path):
+    client = ChatGptClient(str(tmp_path), session_cookie="cookie")
+    response = _FakeResponse(
+        "https://chatgpt.com/backend-api/conversation/chat-123",
+        {"conversation_id": "chat-123", "mapping": {}, "current_node": None, "async_status": "in_progress"},
+    )
+    responses = [response] * 20
+    page = _ConversationFetchPageWithSequentialResponses(responses)
+
+    with pytest.raises(TimeoutError, match="ancora in caricamento"):
+        await client._fetch_conversation_via_page(page, "chat-123")
+
+    assert page.goto_calls == 7
+    assert page.waited_timeouts.count(ChatGptClient.ASYNC_STATUS_POLL_INTERVAL_MS) == 6
 
 
 @pytest.mark.asyncio

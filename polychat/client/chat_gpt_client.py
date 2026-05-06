@@ -36,9 +36,11 @@ class ChatGptClient(AbstractClient):
     POST_SUBMIT_WAIT_MS = 5_000
     COMPLETE_WAIT_TIMEOUT_SECONDS = 60.0
     COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 2.0
-    CONVERSATION_FETCH_TIMEOUT_MS = 30_000
+    CONVERSATION_FETCH_TIMEOUT_MS = 90_000
     CONVERSATION_PAGE_LOAD_TIMEOUT_MS = 10_000
     IMAGE_DOWNLOAD_GRACE_PERIOD_MS = 5_000
+    ASYNC_STATUS_POLL_INTERVAL_MS = 10_000
+    ASYNC_STATUS_POLL_TIMEOUT_MS = 60_000
 
     @inject
     def __init__(
@@ -681,6 +683,7 @@ class ChatGptClient(AbstractClient):
 
     async def _fetch_conversation_via_page(self, page, chat_id: str) -> dict:  # noqa: ANN001
         conversation_url = f"https://chatgpt.com/backend-api/conversation/{chat_id}"
+        url = f"https://chatgpt.com/c/{chat_id}"
         image_download_url = ""
         last_image_seen_at = 0.0
 
@@ -697,19 +700,22 @@ class ChatGptClient(AbstractClient):
 
         page.on("response", handle_response)
 
-        url = f"https://chatgpt.com/c/{chat_id}"
-        async with page.expect_response(
-            lambda response: self._is_matching_conversation_response(response.url, conversation_url),
-            timeout=self.CONVERSATION_FETCH_TIMEOUT_MS,
-        ) as conversation_response_info:
-            await self._goto(page, url, wait_until="domcontentloaded", timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
-            try:
-                await page.wait_for_load_state("domcontentloaded", timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
-            except Exception:
-                logger.info("Conversation page did not reach domcontentloaded quickly; continuing")
+        conversation_payload = await self._await_conversation_payload(page, conversation_url, url, use_reload=False)
+        async_status_waited_ms = 0
 
-        conversation_response = await conversation_response_info.value
-        conversation_payload = await conversation_response.json()
+        while conversation_payload.get("async_status") is not None:
+            if async_status_waited_ms >= self.ASYNC_STATUS_POLL_TIMEOUT_MS:
+                raise TimeoutError("Risposta conversazione ChatGPT ancora in caricamento dopo 60 secondi")
+
+            logger.info(
+                "Conversation async_status still set (%s); waiting %sms before retry",
+                conversation_payload.get("async_status"),
+                self.ASYNC_STATUS_POLL_INTERVAL_MS,
+            )
+            await page.wait_for_timeout(self.ASYNC_STATUS_POLL_INTERVAL_MS)
+            async_status_waited_ms += self.ASYNC_STATUS_POLL_INTERVAL_MS
+            conversation_payload = await self._await_conversation_payload(page, conversation_url, url, use_reload=True)
+
         await page.wait_for_timeout(self.IMAGE_DOWNLOAD_GRACE_PERIOD_MS)
 
         if last_image_seen_at > 0:
@@ -752,6 +758,27 @@ class ChatGptClient(AbstractClient):
         normalized_response_url = response_url.split("?", 1)[0].rstrip("/")
         normalized_conversation_url = conversation_url.rstrip("/")
         return normalized_response_url == normalized_conversation_url
+
+    async def _await_conversation_payload(self, page, conversation_url: str, url: str, use_reload: bool) -> dict:  # noqa: ANN001
+        async with page.expect_response(
+            lambda response: self._is_matching_conversation_response(response.url, conversation_url),
+            timeout=self.CONVERSATION_FETCH_TIMEOUT_MS,
+        ) as conversation_response_info:
+            if use_reload:
+                try:
+                    await self._goto(page, url, wait_until="domcontentloaded", timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
+                    await page.wait_for_load_state("domcontentloaded", timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
+                except Exception:
+                    logger.info("Conversation page goto retry did not reach domcontentloaded quickly; continuing")
+            else:
+                await self._goto(page, url, wait_until="domcontentloaded", timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=self.CONVERSATION_PAGE_LOAD_TIMEOUT_MS)
+                except Exception:
+                    logger.info("Conversation page did not reach domcontentloaded quickly; continuing")
+
+        conversation_response = await conversation_response_info.value
+        return await conversation_response.json()
 
     def proxy_download(self, download_url: str) -> tuple[bytes, int, str, str]:
         """Proxy download usando il cookie ChatGPT in header Cookie."""
