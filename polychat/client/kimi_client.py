@@ -1,4 +1,3 @@
-import asyncio
 import os
 from typing import Any, Literal, Optional
 from urllib.parse import urlparse
@@ -17,8 +16,12 @@ class KimiClient(AbstractClient):
     """Client per interagire con Kimi tramite automazione browser."""
 
     BASE_URL = "https://www.kimi.com/"
+    GET_CHAT_URL = "https://www.kimi.com/apiv2/kimi.gateway.chat.v1.ChatService/GetChat"
+    POST_SUBMIT_WAIT_MS = 5_000
     COMPLETE_WAIT_TIMEOUT_SECONDS = 60.0
     COMPLETE_WAIT_CHECK_INTERVAL_SECONDS = 2.0
+    GET_CHAT_WAIT_TIMEOUT_MS = 10_000
+    GET_CHAT_MAX_WAIT_MS = 90_000
 
     @inject
     def __init__(
@@ -104,7 +107,6 @@ class KimiClient(AbstractClient):
 
         async def _attempt() -> KimiResponse:
             constraints = Screen(max_width=1920, max_height=1080)
-            content_html = ""
 
             async with AsyncCamoufox(
                 headless=self.headless,
@@ -125,38 +127,12 @@ class KimiClient(AbstractClient):
                     access_token,
                     refresh_token,
                 )
-
-                await asyncio.sleep(5)
-
-                last_len = 0
-                max_wait_seconds = 120
-                elapsed = 0
-
-                while elapsed < max_wait_seconds:
-                    await asyncio.sleep(2)
-                    elapsed += 2
-
-                    messages = await page.query_selector_all(".chat-content-item-assistant .markdown")
-                    if not messages:
-                        continue
-
-                    last_message = messages[-1]
-                    html = await last_message.inner_html()
-                    if html is None:
-                        continue
-
-                    current_len = len(html)
-                    if current_len > last_len:
-                        last_len = current_len
-                        content_html = html
-                        continue
-
-                    break
+                content = await self._fetch_conversation_via_page(page, chat_id)
 
                 await page.close()
                 await context.close()
 
-            return KimiResponse(chat_id=chat_id, message=self._clean_message_html(content_html))
+            return KimiResponse(chat_id=chat_id, message=content)
 
         return await self._retry_async(_attempt, attempts=3)
 
@@ -192,17 +168,17 @@ class KimiClient(AbstractClient):
                         access_token,
                         refresh_token,
                     )
-                    await self._wait_for_network_to_settle(
+                    await page.wait_for_timeout(self.POST_SUBMIT_WAIT_MS)
+                    await self._open_chat_page(page, resolved_chat_id)
+                    content = await self._fetch_conversation_via_page(
                         page,
-                        timeout_seconds=self.COMPLETE_WAIT_TIMEOUT_SECONDS,
-                        check_interval_seconds=self.COMPLETE_WAIT_CHECK_INTERVAL_SECONDS,
+                        resolved_chat_id,
                     )
-                    content = await self._read_last_message_html(page)
                 finally:
                     await page.close()
                     await context.close()
 
-                return KimiResponse(chat_id=resolved_chat_id, message=self._clean_message_html(content))
+                return KimiResponse(chat_id=resolved_chat_id, message=content)
 
         return await self._retry_async(_attempt, attempts=3)
 
@@ -379,34 +355,77 @@ class KimiClient(AbstractClient):
             await page.wait_for_timeout(500)
             return
 
-    async def _read_last_message_html(self, page) -> str:  # noqa: ANN001
-        content_html = ""
-        last_len = 0
-        elapsed = 0
-        max_wait_seconds = 120
+    async def _open_chat_page(self, page, chat_id: str) -> None:  # noqa: ANN001
+        await self._goto(page, f"{self.BASE_URL}chat/{chat_id}", wait_until="domcontentloaded", timeout=20_000)
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=20_000)
+        except Exception:
+            pass
 
-        while elapsed < max_wait_seconds:
-            await asyncio.sleep(2)
-            elapsed += 2
+    async def _fetch_conversation_via_page(
+        self,
+        page,
+        chat_id: str,
+    ) -> str:  # noqa: ANN001
+        if not chat_id:
+            raise ValueError("chat_id mancante")
 
-            messages = await page.query_selector_all(".chat-content-item-assistant .markdown")
-            if not messages:
+        waited_ms = 0
+
+        while waited_ms < self.GET_CHAT_MAX_WAIT_MS:
+            try:
+                async with page.expect_response(
+                    lambda response: self._is_matching_get_chat_response(response.url),
+                    timeout=self.GET_CHAT_WAIT_TIMEOUT_MS,
+                ) as response_info:
+                    await page.wait_for_timeout(self.GET_CHAT_WAIT_TIMEOUT_MS)
+                response = await response_info.value
+            except Exception:
+                waited_ms += self.GET_CHAT_WAIT_TIMEOUT_MS
+                if waited_ms >= self.GET_CHAT_MAX_WAIT_MS:
+                    break
+                await page.reload(wait_until="domcontentloaded", timeout=20_000)
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=20_000)
+                except Exception:
+                    pass
                 continue
 
-            last_message = messages[-1]
-            html = await last_message.inner_html()
-            if html is None:
-                continue
+            waited_ms += self.GET_CHAT_WAIT_TIMEOUT_MS
+            payload = await response.json()
+            message = self._extract_message_from_get_chat_payload(payload, chat_id)
+            if message is not None:
+                return message
 
-            current_len = len(html)
-            if current_len > last_len:
-                last_len = current_len
-                content_html = html
-                continue
+            if waited_ms >= self.GET_CHAT_MAX_WAIT_MS:
+                break
+            await page.reload(wait_until="domcontentloaded", timeout=20_000)
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=20_000)
+            except Exception:
+                pass
 
-            break
+        raise TimeoutError("Risposta conversazione Kimi ancora in caricamento dopo 90 secondi")
 
-        return content_html
+    @classmethod
+    def _extract_message_from_get_chat_payload(cls, payload: dict[str, Any], chat_id: str) -> Optional[str]:
+        chat = payload.get("chat") if isinstance(payload, dict) else None
+        if not isinstance(chat, dict):
+            return None
+
+        payload_chat_id = str(chat.get("id", "")).strip()
+        if payload_chat_id != chat_id:
+            return None
+
+        message_content = chat.get("messageContent")
+        if message_content is None:
+            return ""
+        return str(message_content)
+
+    @classmethod
+    def _is_matching_get_chat_response(cls, response_url: str) -> bool:
+        normalized_response_url = response_url.split("?", 1)[0].rstrip("/")
+        return normalized_response_url == cls.GET_CHAT_URL
 
     @staticmethod
     def _clean_message_html(content: str) -> str:
